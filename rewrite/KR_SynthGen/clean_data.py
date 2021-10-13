@@ -5,6 +5,8 @@ import pandas as pd
 
 from datetime import date
 
+from base import *
+
 fileList = glob.glob('../data/*.csv')
 #print(fileList)
 
@@ -34,17 +36,10 @@ df = df[~((df.index.month == 2) & (df.index.day == 29))]
 df.to_csv('../data/Qdaily.txt')
 writeExcelGrid(df,'daily')
 
-#create a monthly df with sums and adjusted from cumecs to cu.m over month
-mDf = df.groupby([lambda x: x.year, lambda x: x.month]).sum()
-mDf['Date'] = mDf.index.map(lambda x: date(x[0], x[1], 1))
-mDf.reset_index(drop=True, inplace=True)
-mDf.set_index('Date',inplace=True)
-mDf.index = pd.to_datetime(mDf.index)
-#print(mDf.info())
+qMonthly = convert_data_to_monthly(df)
+for thisStn in qMonthly.keys():
+    if 'evap' not in thisStn:
+        qMonthly[thisStn] *= 24*3600 #cum/s to cum/day
+    qMonthly[thisStn].to_csv('../validation/historical/'+thisStn+'-monthly.csv')
 
-#conversion of flow to cum/day
-for thisCol in mDf.columns:
-    if 'evap' not in thisCol:
-        mDf[thisCol] *= 24*3600 #cum/s to cum/day
 
-writeExcelGrid(mDf,'monthly')

@@ -6,8 +6,8 @@ nYears = qDaily.index.max() - qDaily.index.min()
 nSites = len(qDaily.columns)
 print(qDaily.info())
 
-num_realizations = [100, 1000]
-num_years = [100, 1]
+num_realizations = [nYears**2, 1000] #lall's criterion
+num_years = [nYears**2, 1]
 
 for k in range(1:length(num_realizations)):
     Qd_cg = combined_generator(Qdaily, num_realizations[k], num_years[k] );
@@ -16,9 +16,9 @@ for k in range(1:length(num_realizations)):
     Qd_cg[:,:,4] = log[Qd_cg[:,:,4]];
 
     # write simulated data to file
-    for i=1:Nsites:
+    for i in range(1:Nsites):
         q_ = [];
-        for j=1:num_realizations(k)
+        for j in range(1:num_realizations(k)):
             qi = nan(365*num_years(k),1);
             qi(1:size(Qd_cg,2)) = Qd_cg(j,:,i)';
             q_ = [q_ reshape(qi,365,num_years(k))];
@@ -115,20 +115,15 @@ def combined_generator(hist_data, nR, nY ) :
 
 def monthly_main( hist_data, nR, nY ):
     # from daily to monthly
-    #Qh = convert_data_to_monthly(hist_data) ;
-    #use pandas transform here
-    #create a monthly df with sums and adjusted from cumecs to cu.m over month
-    Qh = df.groupby([lambda x: x.year, lambda x: x.month]).sum()
-    Qh['Date'] = Qh.index.map(lambda x: date(x[0], x[1], 1))
-    Qh.reset_index(drop=True, inplace=True)
-    Qh.set_index('Date',inplace=True)
-    Qh.index = pd.to_datetime(Qh.index)
+    Qh = convert_data_to_monthly(hist_data) ;
 
+    qq ={}
     # generation
     for r in range(1:nR):
         Qs = monthly_gen(Qh, nY);
         for k=1:Nsites:
-            qq{k}(r,:) = reshape(Qs{k}',1,[]);
+            #qq{k}(r,:) = reshape(Qs{k}',1,[]);
+            qq[k][r,:] = np.ravel(Qz[k].T)
         
     # output matrix
     Qgen = nan(nR,nY*12,Nsites) ;
@@ -137,63 +132,7 @@ def monthly_main( hist_data, nR, nY ):
 
     return Qgen
 
-def monthly_gen(Q_historical, num_years, p=None, n=None)
-    nQ_historical = len(Q_historical);
-        
-    num_years = num_years+1; # this adjusts for the new corr technique
-    if p == None and n == None:
-        nQ = nQ_historical;
-    else:
-        n = n-1; # (input n=2 to double the frequency, i.e. repmat 1 additional time)
-        nQ = nQ_historical + floor(p*nQ_historical+1)*n;
-    
-    Random_Matrix = randi(nQ, num_years, 12);
-    
-    for k in range(1:npoints):
-        Q_matrix = Q_historical[k];
-        """
-        if  p != None and n != None:
-            temp = sort(Q_matrix);
-            app = temp(1:ceil(p*nQ_historical),:); # find lowest p# of values for each month
-            Q_matrix = vertcat(Q_matrix, repmat(app, n, 1));
-        """
-        logQ = np.log10(Q_matrix);
 
-        monthly_mean = [];
-        monthly_stdev = [];
-        Z = [];
 
-        for i in range(1:13):
-            monthly_mean.append(mean(logQ[i]))
-            monthly_stdev.append(std(logQ[i]))
-            Z.append((logQ[i] - monthly_mean[i]) / monthly_stdev[i])
-        
-        Z_vector = reshape(Z',1,[]);
-        Z_shifted = reshape(Z_vector(7:(nQ*12-6)),12,[])';
 
-        # The correlation matrices should use the historical Z's
-        # (the "apped years" do not preserve correlation)
-        U = chol_corr(Z(1:nQ_historical,:));
-        U_shifted = chol_corr(Z_shifted(1:nQ_historical-1,:));
-
-        for i=1:12
-            Qs_uncorr(:,i) = Z(Random_Matrix(:,i), i);
-        
-        
-        Qs_uncorr_vector = reshape(Qs_uncorr(:,:)',1,[]);
-        Qs_uncorr_shifted(:,:) = reshape(Qs_uncorr_vector(7:(num_years*12-6)),12,[])';
-        Qs_corr(:,:) = Qs_uncorr(:,:)*U;
-        Qs_corr_shifted(:,:) = Qs_uncorr_shifted(:,:)*U_shifted;
-
-        Qs_log(:,1:6) = Qs_corr_shifted(:,7:12);
-        Qs_log(:,7:12) = Qs_corr(2:num_years,7:12);
-
-        for i=1:12
-            Qsk(:,i) = exp(Qs_log(:,i)*monthly_stdev(i) + monthly_mean(i));
-        
-        
-        Qs{k} = Qsk;
-    
-    
-    return Qs
 
