@@ -71,13 +71,11 @@ def monthly_main( hist_data, nR, nY ):
 
     qq ={}
     #qq = np.empty((nR,nY*12,Nsites)).fill(np.nan)
-    # generation
+    """
     for r in range(0,nR):
         Qs = monthly_gen(Qh, nY);
         for k in range(1,Nsites):
-            #print(Qs[k],'Qs')
-            print(len(Qs[k]),len(Qs[k][1]))
-            raise Exception('stop here for me')
+            #print(len(Qs[k]),len(Qs[k][1]))
             #qq{k}(r,:) = reshape(Qs{k}',1,[]);
             temp = np.ravel(Qs[k].T) #Qs[k] should be 12 elements but returns 816 i.e. (12months *68Years) here
             try:
@@ -92,11 +90,31 @@ def monthly_main( hist_data, nR, nY ):
     for k in range(1,Nsites):
         Qgen[:,:,k]= qq[k] ;
     return Qgen
+    """
+    # output matrix
+    #Qgen = nan(nR,nY*12,Nsites) ;
+    ##Qgen = np.empty((nR,nY*12,Nsites)) #.fill(np.nan)
+    Qgen = {}
+    for r in range(0,nR):
+        Qs = monthly_gen(Qh, nY);
+        temp = []
+        for k in range(0,Nsites):
+            #print(len(Qs[k]),len(Qs[k][1]))
+            #qq{k}(r,:) = reshape(Qs{k}',1,[]);
+            temp.append(np.ravel(Qs[k].T))
+        temp = np.array(temp).T
+        #print(temp.shape)
+        Qgen[r] = temp
+        #Qgen[r,:,k] = temp.reshape((1,temp.size,1))
+    
+    #print(Qgen,'Qgen')
+    ##print(len(Qgen),Qgen[1].shape)
+    return Qgen
 
 def monthly_gen(q_historical, num_years, p=None, n=None):
-    q_h_keys = list(q_historical.keys())
-    nPoints = len(q_h_keys ) #no of donor stations
-    nQ_historical = len(q_historical[q_h_keys[1]]); #no of years of data
+    q_h_stns = list(q_historical.keys())
+    nPoints = len(q_h_stns) #no of donor stations
+    nQ_historical = len(q_historical[q_h_stns[1]]); #no of years of data
     #future - check all dfs are of same size in qhistorical
     
     num_years = num_years+1; # this adjusts for the new corr technique
@@ -107,13 +125,14 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
         nQ = nQ_historical + math.floor(p*nQ_historical+1)*n;
     
     #Random_Matrix = randi(nQ, num_years, 12);
-    Random_Matrix = np.random.randint(num_years, size=(nQ,12))
-    #print(Random_Matrix)
+    #Random_Matrix = np.random.randint(num_years, size=(nQ,12))
+    Random_Matrix = np.random.randint(nQ, size=(num_years,12))
+    #print(Random_Matrix.shape,'rmsize')
     
     Qs = {}
-    for k in range(1,nPoints):
-        Q_matrix = q_historical[q_h_keys[k]]
-        #print(Q_matrix)
+    for k in range(0,nPoints):
+        Q_matrix = q_historical[q_h_stns[k]]
+        #print(Q_matrix.shape)
         """
         if  p != None and n != None:
             temp = sort(Q_matrix);
@@ -132,24 +151,30 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
             monthly_mean.append(m_mean)
             monthly_stdev.append(m_stdev)
         Z = np.array(Z) #list of lists to array format
+        #print(Z.shape)
         
         #Z_vector = reshape(Z',1,[]);
-        Z_vector = np.ravel(np.array(Z))
+        Z_vector = np.ravel(Z.T)
         Z_JulyToJune = Z_vector[6:-6] #zero index so starts at 6, uptill last 6 months
         #Z_shifted = reshape(Z_vector(7:(nQ*12-6)),12,[])'; #july of start year to june of end year
         Z_shifted = np.transpose(Z_JulyToJune.reshape(-1,12))
-
+        #print(Z_shifted.shape,'zshiftshape')
+        
         # The correlation matrices should use the historical Z's
         # (the "appendedd years" do not preserve correlation)
         U = chol_corr(Z[:nQ_historical-1,:]) #index adjusted for python
         U_shifted = chol_corr(Z_shifted[:nQ_historical-2,:])
-
+        #print('b',U.shape)
+        
         Qs_uncorr = []
         for i in range(0,12): #python index related
+            #print('z RM',Z.shape,Random_Matrix.shape)
             #Qs_uncorr[:,i] = Z[Random_Matrix[:,i], i];
-            Qs_uncorr.append(Z[Random_Matrix[:,i],i])
+            ##Qs_uncorr.append(Z[Random_Matrix[:,i],i])
+            Qs_uncorr.append(Z[i,Random_Matrix[:,i]])
         Qs_uncorr = np.array(Qs_uncorr).T
         #Qs_corr(:,:) = Qs_uncorr(:,:)*U;
+        #print('c',Qs_uncorr.shape)
         Qs_corr = np.dot(Qs_uncorr,U)
         
         #Qs_uncorr_vector = reshape(Qs_uncorr(:,:)',1,[]);
@@ -165,18 +190,19 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
         Qs_log[:,0:5] = Qs_corr_shifted[:,6:11] #indices adjusted
         #Qs_log[:,6:11] = Qs_corr[1:num_years-1,6:11]
         Qs_log[:,6:11] = Qs_corr[:-1,6:11] #not sure should we exclude last or first?
+        #print(Qs_log)#.shape)
 
         Qsk = np.empty((len( Qs_log ),len( Qs_log[1])))
         for i in range(0,12):
             Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i]);
-        
         Qs[k] = Qsk;
-        
+    
+    #print(Qs)
     return Qs
 
 ###---------------------yet to finish this part -----------------------------------
 
-def KNN_identification( Z, Qtotals, month, K=None )
+def KNN_identification( Z, Qtotals, month, K=None ):
     # [KNN_id, W] = KNN_identification( Z, Qtotals, month, k )
     #
     # Identification of K-nearest neighbors of Z in the historical annual data
@@ -207,9 +233,9 @@ def KNN_identification( Z, Qtotals, month, K=None )
     # nearest neighbors identification;
     # only look at neighbors from the same month +/- 7 days
     Nsites = len(Qtotals[month][1]);
-    delta = np.empty((Ntotals,1)); # first and last month have 7 less possible shifts
-    for i in range(1:Ntotals):
-        for j in range(1:Nsites):
+    delta = np.empty((Ntotals,1)) # first and last month have 7 less possible shifts
+    for i in range(1,Ntotals):
+        for j in range(1,Nsites):
                 delta[i] += (Qtotals[month][i,j]-Z[1,1,j])^2;
 
     #Y = [[1:size(delta,1)]', delta ] ;
@@ -220,12 +246,12 @@ def KNN_identification( Z, Qtotals, month, K=None )
 
     # computation of the weights
     f = np.array(range(1,K))
-    f1 = 1./f;
-    W = f1 ./ sum(f1) ;
+    f1 = 1/f;
+    W = f1 / sum(f1) ;
 
     return KNN_id, W
 
-def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month )
+def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month ):
     # py = KNN_sampling( KKN_id, indices, Wcum, Qdaily, month )
     #
     # Selection of one KNN according to the probability distribution defined by
@@ -248,15 +274,15 @@ def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month )
     #Randomly select one of the k-NN using the Lall and Sharma density estimator
     r = rand ;
     Wcum = [0, Wcum] ;
-    for i = 1:len(Wcum)-1 :
-        if (r > Wcum[i]) && (r <= Wcum[i+1]) :
+    for i in range( 1,len(Wcum)-1) :
+        if (r > Wcum[i]) and (r <= Wcum[i+1]) :
             KNNs = i ;
     yearID = KNN_id( KNNs ) ;
 
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
     nrows = len(Qdaily)
-    Qdaily = [Qdaily[nrows-7:nrows,:]; Qdaily; Qdaily[1:8,:]];
+    ##Qdaily = [Qdaily[nrows-7:nrows,:]; Qdaily; Qdaily[1:8,:]];
     #what is this here, multitude of columns?
 """
     # shift historical data to get nearest neighbor corresponding to yearID
@@ -274,3 +300,86 @@ def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month )
 
     return [py, yearID] 
 """
+
+
+##---------------------------------------------------------------------------------
+def combined_generator(hist_data, nR, nY ) :
+    # generation of monthly data via Kirsch et al. (2013):
+    # Kirsch, B. R., G. W. Characklis, and H. B. Zeff (2013), 
+    # Evaluating the impact of alternative hydro-climate scenarios on transfer 
+    # agreements: Practical improvement for generating synthetic streamflows, 
+    # Journal of Water Resources Planning and Management, 139(4), 396–406.
+    QQg = monthly_main(hist_data, nR, nY );
+    Qh = convert_data_to_monthly(hist_data);
+    Qh_stns = list(Qh.keys())
+    Nyears = len(Qh[Qh_stns[1]])
+
+"""
+    # disaggregation from monthly to daily time step as in Nowak et al. (2010):
+    # Nowak, K., Prairie, J., Rajagopalan, B., & Lall, U. (2010). 
+    # A nonparametric stochastic approach for multisite disaggregation of 
+    # annual to daily streamflow. Water Resources Research, 46(8).
+
+    # Find K-nearest neighbors (KNN) in terms of total monthly flow and 
+    # randomly select one for disaggregation. Proportionally scale the flows in
+    # the selected neighbor to match the synthetic monthly total. To
+    # disaggregate Jan Flows, consider all historical January totals +/- 7
+    # days, etc.
+    Dt = 3600*24;
+    DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31];
+    D = zeros(nR,365*nY,Nsites);
+
+    # concatenate last 7 days of last year before first 7 days of first year
+    # and first 7 days of first year after last 7 days of last year
+    nrows = size(hist_data,1);
+    extra_hist_data = [hist_data(nrows-7:nrows,:); hist_data; hist_data(1:8,:)];
+
+    # find monthly totals for all months +/- 7 days
+    for i=1:12
+        count = 1;
+        if i == 1 || i == 12
+            nTotals = Nyears*15-7; # 7 less shifts in first and last month
+        else
+            nTotals = Nyears*15;
+        Qmonthly_shifted = zeros(nTotals,Nsites);
+        indices = zeros(nTotals,2);
+        for k = 1:15
+            shifted_hist_data = extra_hist_data(k:k+nrows-1,:);
+            Qh = convert_data_to_monthly(shifted_hist_data);
+            for j=1:Nsites
+                if i == 1 && k<8
+                    Qh{j} = Qh{j}(2:size(Qh{j},1),i); # remove first year
+                elseif i == 12 && k>8
+                    Qh{j} = Qh{j}(1:(size(Qh{j},1)-1),i); # remove last year
+                Qmonthly_shifted(count:(count+size(Qh{j},1)-1),j) = Qh{j}(:,1);
+            if i == 1 && k<8
+                indices(count:(count+size(Qh{j},1)-1),1) = 2:(size(Qh{j},1)+1);
+            else
+                indices(count:(count+size(Qh{j},1)-1),1) = 1:size(Qh{j},1);
+            indices(count:(count+size(Qh{j},1)-1),2) = k;
+            count = count + size(Qh{j},1);
+        Qtotals{i} = Qmonthly_shifted;
+        Qindices{i} = indices;
+
+    for r=1:nR
+        dd = [];
+        for i=1:nY*12
+            #monthly value for all sites
+            Z = QQg(r,i,:);
+            #KNN and weights
+            month = mod(i,12);
+            if month == 0
+                month = 12;
+            [KNN_id, W] = KNN_identification(Z, Qtotals, month);
+            Wcum = cumsum(W);
+                
+            #sampling of one KNN
+            py = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month);
+            d = zeros(Nsites,DaysPerMonth(month));
+            for j=1:Nsites
+                d(j,:) = py(:,j).*Z(1,1,j);
+            dd = [dd d];
+        
+        D(r,:,:) = dd'/Dt;
+"""
+##---------------------------------------------------------------------------------
