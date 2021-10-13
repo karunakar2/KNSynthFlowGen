@@ -74,16 +74,22 @@ def monthly_main( hist_data, nR, nY ):
     # generation
     for r in range(0,nR):
         Qs = monthly_gen(Qh, nY);
-        #print(Qs,'Qs')
         for k in range(1,Nsites):
+            #print(Qs[k],'Qs')
+            print(len(Qs[k]),len(Qs[k][1]))
+            raise Exception('stop here for me')
             #qq{k}(r,:) = reshape(Qs{k}',1,[]);
-            qq[k][r,:] = np.ravel(Qs[k].T)
+            temp = np.ravel(Qs[k].T) #Qs[k] should be 12 elements but returns 816 i.e. (12months *68Years) here
+            try:
+                len(qq[k])
+            except KeyError:
+                qq[k] = np.empty((nR,len(temp)))
+            qq[k][r,:] = temp
     
     # output matrix
     #Qgen = nan(nR,nY*12,Nsites) ;
-    Qgen = np.empty((nR,nY*12,Nsites)).fill(np.nan)
-    
-    for k in range(0,Nsites):
+    Qgen = np.empty((nR,nY*12,Nsites)) #.fill(np.nan)
+    for k in range(1,Nsites):
         Qgen[:,:,k]= qq[k] ;
     return Qgen
 
@@ -168,4 +174,103 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
         
     return Qs
 
+###---------------------yet to finish this part -----------------------------------
 
+def KNN_identification( Z, Qtotals, month, K=None )
+    # [KNN_id, W] = KNN_identification( Z, Qtotals, month, k )
+    #
+    # Identification of K-nearest neighbors of Z in the historical annual data
+    # z and computation of the associated weights W.
+    #
+    # Input:    Z = synthetic datum (scalar)
+    #           Qtotals = total monthly flows at all sites for all historical months 
+    #             within +/- 7 days of the month being disaggregated
+    #           month = month being disaggregated
+    #           k = number of nearest neighbors (by default k=n_year^0.5
+    #             according to Lall and Sharma (1996))
+    # Output:   KNN_id = indices of the first K-nearest neighbors of Z in the
+    #             the historical annual data z
+    #           W = nearest neighbors weights, according to Lall and Sharma
+    #             (1996): W(i) = (1/i) / (sum(1/i)) 
+    #
+    # MatteoG 31/05/2013
+
+    # Ntotals is the number of historical monthly patterns used for disaggregation.
+    # A pattern is a sequence of ndays of daily flows, where ndays is the
+    # number of days in the month being disaggregated. Patterns are all
+    # historical sequences of length ndays beginning within 7 days before or
+    # after the 1st day of the month being disaggregated.
+    Ntotals = len(Qtotals[month]);
+    if K == None:
+        K = round(sqrt(Ntotals))
+
+    # nearest neighbors identification;
+    # only look at neighbors from the same month +/- 7 days
+    Nsites = len(Qtotals[month][1]);
+    delta = np.empty((Ntotals,1)); # first and last month have 7 less possible shifts
+    for i in range(1:Ntotals):
+        for j in range(1:Nsites):
+                delta[i] += (Qtotals[month][i,j]-Z[1,1,j])^2;
+
+    #Y = [[1:size(delta,1)]', delta ] ;
+    Y = [np.array(list(range(1,len(delta)))).T,np.array(delta)]
+    #Y_ord = sortrows(Y, 2);
+    ###What to do here??
+    KNN_id = Y_ord[1:K,1] ;
+
+    # computation of the weights
+    f = np.array(range(1,K))
+    f1 = 1./f;
+    W = f1 ./ sum(f1) ;
+
+    return KNN_id, W
+
+def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month )
+    # py = KNN_sampling( KKN_id, indices, Wcum, Qdaily, month )
+    #
+    # Selection of one KNN according to the probability distribution defined by
+    # the weights W.
+    #
+    # Input:    KNN_id = indices of the first K-nearest neighbors
+    #           indices = n x 2 matrix where n is the number of monthly totals
+    #             and the 2 columns store the historical year in which each
+    #             monthly total begins, and the number of shift index
+    #             where 1 is 7 days earlier and 15 is 7 days later
+    #           Wcum = cumulated probability for each nearest neighbor
+    #           Qdaily = historical data
+    #           month = month being disaggregated
+    # Output:   py = selected proportion vector corresponding to the sampled
+    #             shifted historical month
+    #           yearID = randomly selected monthly total (row to select from indices)
+    #
+    # MatteoG 31/05/2013
+
+    #Randomly select one of the k-NN using the Lall and Sharma density estimator
+    r = rand ;
+    Wcum = [0, Wcum] ;
+    for i = 1:len(Wcum)-1 :
+        if (r > Wcum[i]) && (r <= Wcum[i+1]) :
+            KNNs = i ;
+    yearID = KNN_id( KNNs ) ;
+
+    # concatenate last 7 days of last year before first 7 days of first year
+    # and first 7 days of first year after last 7 days of last year
+    nrows = len(Qdaily)
+    Qdaily = [Qdaily[nrows-7:nrows,:]; Qdaily; Qdaily[1:8,:]];
+    #what is this here, multitude of columns?
+"""
+    # shift historical data to get nearest neighbor corresponding to yearID
+    year = indices(yearID,1);
+    k = indices(yearID,2);
+    shifted_Qdaily = Qdaily(k:k+nrows-1,:);
+
+    DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31];
+    start = 365*(year-1) + sum(DaysPerMonth(1:(month-1)))+1;
+    dailyFlows = shifted_Qdaily(start:start+DaysPerMonth(month)-1,:);
+
+    py = zeros(size(dailyFlows));
+    for i=1:size(Qdaily,2)
+        py(:,i) = dailyFlows(:,i)/sum(dailyFlows(:,i));
+
+    return [py, yearID] 
+"""
