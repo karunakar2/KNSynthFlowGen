@@ -1,41 +1,9 @@
 import numpy as np
 import pandas as pd
 
-qDaily = pd.csv_read('../data/Qdaily.txt')
-nYears = qDaily.index.max() - qDaily.index.min()
-nSites = len(qDaily.columns)
-print(qDaily.info())
+from base import *
 
-num_realizations = [nYears**2, 1000] #lall's criterion
-num_years = [nYears**2, 1]
-
-for k in range(1:length(num_realizations)):
-    Qd_cg = combined_generator(Qdaily, num_realizations[k], num_years[k] );
-    """
-    # back-transform evaporation
-    Qd_cg[:,:,4] = log[Qd_cg[:,:,4]];
-
-    # write simulated data to file
-    for i in range(1:Nsites):
-        q_ = [];
-        for j in range(1:num_realizations(k)):
-            qi = nan(365*num_years(k),1);
-            qi(1:size(Qd_cg,2)) = Qd_cg(j,:,i)';
-            q_ = [q_ reshape(qi,365,num_years(k))];
-        
-        Qd2(:,i) = reshape(q_(:),[],1);
-        saveQ = reshape(Qd2(:,i), num_years(k)*365, num_realizations(k))';
-        dlmwrite(['./../validation/synthetic/' sites{i} dimensions{k} '-daily.csv'], saveQ);
-    synMonthlyQ = convert_data_to_monthly(Qd2);
-    # divide evaporation by 86400 (s/day) to get total monthly evap in mm/month
-    synMonthlyQ{4} = synMonthlyQ{4}/86400;
-    for i=1:Nsites
-        saveMonthlyQ = reshape(synMonthlyQ{i}',12*num_years(k),num_realizations(k))';
-        dlmwrite(['./../validation/synthetic/' sites{i} dimensions{k} '-monthly.csv'], saveMonthlyQ);
-    dlmwrite(['./../validation/synthetic/Qdaily' dimensions{k} '.csv'], Qd2);
-    clear Qd2;
-    """
-
+##---------------------------------------------------------------------------------
 def combined_generator(hist_data, nR, nY ) :
     # generation of monthly data via Kirsch et al. (2013):
     # Kirsch, B. R., G. W. Characklis, and H. B. Zeff (2013), 
@@ -44,8 +12,9 @@ def combined_generator(hist_data, nR, nY ) :
     # Journal of Water Resources Planning and Management, 139(4), 396–406.
     QQg = monthly_main(hist_data, nR, nY );
     Qh = convert_data_to_monthly(hist_data);
-    Nyears = size(Qh{1},1);
+    Nyears = len(Qh[1])
 
+"""
     # disaggregation from monthly to daily time step as in Nowak et al. (2010):
     # Nowak, K., Prairie, J., Rajagopalan, B., & Lall, U. (2010). 
     # A nonparametric stochastic approach for multisite disaggregation of 
@@ -112,25 +81,52 @@ def combined_generator(hist_data, nR, nY ) :
             dd = [dd d];
         
         D(r,:,:) = dd'/Dt;
+"""
+##---------------------------------------------------------------------------------
 
-def monthly_main( hist_data, nR, nY ):
-    # from daily to monthly
-    Qh = convert_data_to_monthly(hist_data) ;
 
-    qq ={}
-    # generation
-    for r in range(1:nR):
-        Qs = monthly_gen(Qh, nY);
-        for k=1:Nsites:
-            #qq{k}(r,:) = reshape(Qs{k}',1,[]);
-            qq[k][r,:] = np.ravel(Qz[k].T)
+qDaily = pd.read_csv('../data/Qdaily.txt', parse_dates=["Date"])
+qDaily.set_index('Date',inplace=True)
+for thisStn in qDaily.columns:
+    if 'evap' in thisStn:
+        qDaily[thisStn] = np.exp(qDaily[thisStn])
+
+nYears = int(qDaily.index.year.max() - qDaily.index.year.min())
+nSites = len(qDaily.columns)
+#print(qDaily.info())
+
+num_realizations = [pow(nYears,2), 1000] #lall's criterion
+num_years = [pow(nYears,2), 1]
+
+for k in range(1,len(num_realizations)):
+    Qd_cg = combined_generator(qDaily, num_realizations[k], num_years[k] )
+    """
+    # back-transform evaporation
+    Qd_cg[:,:,4] = log[Qd_cg[:,:,4]];
+
+    # write simulated data to file
+    for i in range(1:Nsites):
+        q_ = [];
+        for j in range(1:num_realizations(k)):
+            qi = nan(365*num_years(k),1);
+            qi(1:size(Qd_cg,2)) = Qd_cg(j,:,i)';
+            q_ = [q_ reshape(qi,365,num_years(k))];
         
-    # output matrix
-    Qgen = nan(nR,nY*12,Nsites) ;
-    for k in range(1:Nsites):
-        Qgen(:,:,k)= qq{k} ;
+        Qd2(:,i) = reshape(q_(:),[],1);
+        saveQ = reshape(Qd2(:,i), num_years(k)*365, num_realizations(k))';
+        dlmwrite(['./../validation/synthetic/' sites{i} dimensions{k} '-daily.csv'], saveQ);
+    synMonthlyQ = convert_data_to_monthly(Qd2);
+    # divide evaporation by 86400 (s/day) to get total monthly evap in mm/month
+    synMonthlyQ{4} = synMonthlyQ{4}/86400;
+    for i=1:Nsites
+        saveMonthlyQ = reshape(synMonthlyQ{i}',12*num_years(k),num_realizations(k))';
+        dlmwrite(['./../validation/synthetic/' sites{i} dimensions{k} '-monthly.csv'], saveMonthlyQ);
+    dlmwrite(['./../validation/synthetic/Qdaily' dimensions{k} '.csv'], Qd2);
+    clear Qd2;
+    """
 
-    return Qgen
+
+
 
 
 
