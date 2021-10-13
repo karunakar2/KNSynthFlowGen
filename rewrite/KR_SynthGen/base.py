@@ -185,14 +185,14 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
         #Qs_corr_shifted(:,:) = Qs_uncorr_shifted(:,:)*U_shifted;
         Qs_corr_shifted = np.dot(Qs_uncorr_shifted,U_shifted)
 
-        Qs_log = np.empty((len( Qs_corr_shifted ),len( Qs_corr_shifted [1])))
+        Qs_log = np.empty((len( Qs_corr_shifted ),len( Qs_corr_shifted [0])))
         #print(Qs_log)
         Qs_log[:,0:5] = Qs_corr_shifted[:,6:11] #indices adjusted
         #Qs_log[:,6:11] = Qs_corr[1:num_years-1,6:11]
         Qs_log[:,6:11] = Qs_corr[:-1,6:11] #not sure should we exclude last or first?
-        #print(Qs_log)#.shape)
+        #print(Qs_log.shape)
 
-        Qsk = np.empty((len( Qs_log ),len( Qs_log[1])))
+        Qsk = np.empty((len( Qs_log ),len( Qs_log[0])))
         for i in range(0,12):
             Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i]);
         Qs[k] = Qsk;
@@ -314,7 +314,7 @@ def combined_generator(hist_data, nR, nY ) :
     Qh_stns = list(Qh.keys())
     Nyears = len(Qh[Qh_stns[1]])
 
-"""
+
     # disaggregation from monthly to daily time step as in Nowak et al. (2010):
     # Nowak, K., Prairie, J., Rajagopalan, B., & Lall, U. (2010). 
     # A nonparametric stochastic approach for multisite disaggregation of 
@@ -327,13 +327,14 @@ def combined_generator(hist_data, nR, nY ) :
     # days, etc.
     Dt = 3600*24;
     DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31];
-    D = zeros(nR,365*nY,Nsites);
+    D = np.empty((nR,365*nY,Nsites))
 
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
-    nrows = size(hist_data,1);
-    extra_hist_data = [hist_data(nrows-7:nrows,:); hist_data; hist_data(1:8,:)];
-
+    nrows = len(hist_data);
+    extra_hist_data = [hist_data[nrows-7:nrows,:]; hist_data; hist_data(1:8,:)];
+    #whats is happening here
+"""
     # find monthly totals for all months +/- 7 days
     for i=1:12
         count = 1;
