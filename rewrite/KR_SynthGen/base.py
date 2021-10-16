@@ -232,15 +232,16 @@ def KNN_identification( Z, Qtotals, month, K=None ):
 
     # nearest neighbors identification;
     # only look at neighbors from the same month +/- 7 days
-    Nsites = len(Qtotals[month][1]);
+    Nsites = len(Qtotals[month][0]);
     delta = np.empty((Ntotals,1)) # first and last month have 7 less possible shifts
     for i in range(1,Ntotals):
         for j in range(1,Nsites):
                 delta[i] += (Qtotals[month][i,j]-Z[1,1,j])^2;
 
     #Y = [[1:size(delta,1)]', delta ] ;
-    Y = [np.array(list(range(1,len(delta)))).T,np.array(delta)]
+    Y = pd.series(np.array(delta))
     #Y_ord = sortrows(Y, 2);
+    Y_ord = Y.sort_values()
     ###What to do here??
     KNN_id = Y_ord[1:K,1] ;
 
@@ -272,22 +273,25 @@ def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month ):
     # MatteoG 31/05/2013
 
     #Randomly select one of the k-NN using the Lall and Sharma density estimator
-    r = rand ;
-    Wcum = [0, Wcum] ;
-    for i in range( 1,len(Wcum)-1) :
+    #r = rand ;
+    r = np.random.rand(1,1)
+    Wcum = [0, Wcum] ; #not sure whats happening here
+    for i in range( 0,len(Wcum)) : #python index adjusted
         if (r > Wcum[i]) and (r <= Wcum[i+1]) :
             KNNs = i ;
-    yearID = KNN_id( KNNs ) ;
+    yearID = KNN_id[KNNs]
 
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
     nrows = len(Qdaily)
     ##Qdaily = [Qdaily[nrows-7:nrows,:]; Qdaily; Qdaily[1:8,:]];
-    #what is this here, multitude of columns?
+    Qdaily = patchData(Qdaily,7)
+    
+    #well this needs fixing
 """
     # shift historical data to get nearest neighbor corresponding to yearID
-    year = indices(yearID,1);
-    k = indices(yearID,2);
+    year = indices(yearID,1); #find the year that best fits
+    k = indices(yearID,2); #+/- 7 day shift range that has high Weightage
     shifted_Qdaily = Qdaily(k:k+nrows-1,:);
 
     DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31];
@@ -300,10 +304,36 @@ def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month ):
 
     return [py, yearID] 
 """
+    #year = ##
+    #k = #offset
+    shifted_Qdaily = Qdaily.iloc[k:k+nrows,:]
+    dailyFlows = shifted_Qdaily[shifted_Qdaily.index.year== year and shifted_Qdaily.index.month == month].copy()
+    
+    for thisColumn in dailyFlows.columns:
+        py[:,thisColumn] = dailyFlows[thisColumn]/sum(dailyFlows[thisColumn])
+        
+    return [py, yearID]
 
+def patchData(hist_data, period, debug=0):
+    preDf = hist_data.tail(period).copy().reset_index(drop=True)
+    preDf['Date'] = pd.date_range(hist_data.index.min(), freq='-1D', periods=period)
+    preDf.set_index('Date',inplace=True)
+    preDf.sort_values(by=['Date'],inplace=True)
+    posDf = hist_data.head(period).copy().reset_index(drop=True)
+    posDf['Date'] = pd.date_range(hist_data.index.max(), periods=period)
+    posDf.set_index('Date',inplace=True)
+    extra_hist_data = pd.concat([preDf,hist_data,posDf])
+    if debug != 0:
+        print(extra_hist_data.head())
+        print(extra_hist_data.tail())
+        print(len(hist_data),len(extra_hist_data))
+    
+    return extra_hist_data
 
 ##---------------------------------------------------------------------------------
+DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31]
 def combined_generator(hist_data, nR, nY ) :
+    
     # generation of monthly data via Kirsch et al. (2013):
     # Kirsch, B. R., G. W. Characklis, and H. B. Zeff (2013), 
     # Evaluating the impact of alternative hydro-climate scenarios on transfer 
@@ -312,8 +342,7 @@ def combined_generator(hist_data, nR, nY ) :
     QQg = monthly_main(hist_data, nR, nY );
     Qh = convert_data_to_monthly(hist_data);
     Qh_stns = list(Qh.keys())
-    Nyears = len(Qh[Qh_stns[1]])
-
+    Nyears = len(Qh[Qh_stns[0]])
 
     # disaggregation from monthly to daily time step as in Nowak et al. (2010):
     # Nowak, K., Prairie, J., Rajagopalan, B., & Lall, U. (2010). 
@@ -325,15 +354,16 @@ def combined_generator(hist_data, nR, nY ) :
     # the selected neighbor to match the synthetic monthly total. To
     # disaggregate Jan Flows, consider all historical January totals +/- 7
     # days, etc.
-    Dt = 3600*24;
-    DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31];
-    D = np.empty((nR,365*nY,Nsites))
+    ###Dt = 3600*24;
+    ###DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31];
+    ###D = np.empty((nR,365*nY,Nsites))
 
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
-    nrows = len(hist_data);
-    extra_hist_data = [hist_data[nrows-7:nrows,:]; hist_data; hist_data(1:8,:)];
-    #whats is happening here
+    
+    #extra_hist_data = [hist_data[nrows-7:nrows,:]; hist_data; hist_data(1:8,:)];
+    extra_hist_data = patchData(hist_data,7)
+    
 """
     # find monthly totals for all months +/- 7 days
     for i=1:12
@@ -361,12 +391,24 @@ def combined_generator(hist_data, nR, nY ) :
             count = count + size(Qh{j},1);
         Qtotals{i} = Qmonthly_shifted;
         Qindices{i} = indices;
-
+    """
+    nrows = len(hist_data)
+    Qtotals = {}
+    for k in range(1,15):
+        Qmonthly_shifted = (Qh.iloc[k:k+nrows,:]).copy()
+        Qmonthly_shifted.reset_index(inplace=True,drop=True)
+        #Qmonthly_shifted.index = Qh.index
+        Qmonthly_shifted.reindex_like(Qh)
+        Qtotals[k] = Qmonthly_shifted
+        
+    #what should we do about indices here?
+    
+    """
     for r=1:nR
         dd = [];
         for i=1:nY*12
             #monthly value for all sites
-            Z = QQg(r,i,:);
+            Z = QQg[r,i,:];
             #KNN and weights
             month = mod(i,12);
             if month == 0
@@ -383,4 +425,19 @@ def combined_generator(hist_data, nR, nY ) :
         
         D(r,:,:) = dd'/Dt;
 """
+    for r in range(0,nR):
+    dd = []
+    for i, month in zip(range(0,nY*12), range(0,12)):
+        z = QQg[r,i,:]
+        [KNN_id, W] = KNN_identification(Z, Qtotals, month)
+        py, _ = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month);
+        #d = zeros(Nsites,DaysPerMonth(month));
+        d = np.empty((Nsites,DaysPerMonth(month)))
+        for j in range(0:Nsites):
+            d[j,:] = py[:,j].*Z[1,1,j];
+        dd = [dd d] #what is this here? append?
+        
+        D[r,:,:] = dd'/Dt #is this compliment or ?
+    
+    return D
 ##---------------------------------------------------------------------------------
