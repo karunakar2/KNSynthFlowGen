@@ -224,13 +224,14 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
             Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i])
         QskDf = pd.DataFrame(Qsk, columns = Q_matrix.columns) ##, index = Q_matrix.index)
         Qs[k] = QskDf
+        ##print(QskDf.info())
     
     #print(Qs)
     return Qs
 
 ###---------------------yet to finish this part -----------------------------------
 
-def KNN_identification( Z, Qtotals, month, K=None ):
+def KNN_identification( Z, Qtotals, year, month, K=None ):
     # [KNN_id, W] = KNN_identification( Z, Qtotals, month, k )
     #
     # Identification of K-nearest neighbors of Z in the historical annual data
@@ -249,38 +250,45 @@ def KNN_identification( Z, Qtotals, month, K=None ):
     #
     # MatteoG 31/05/2013
 
+    ##Ntotals is calc in two steps here
+    
     # Ntotals is the number of historical monthly patterns used for disaggregation.
     # A pattern is a sequence of ndays of daily flows, where ndays is the
     # number of days in the month being disaggregated. Patterns are all
     # historical sequences of length ndays beginning within 7 days before or
     # after the 1st day of the month being disaggregated.
-    Ntotals = len(Qtotals[month])
     if K == None:
         K = round(sqrt(Ntotals))
 
     # nearest neighbors identification
     # only look at neighbors from the same month +/- 7 days
-    Nsites = len(Qtotals[month][0])
-    delta = np.empty((Ntotals,1)) # first and last month have 7 less possible shifts
-    for i in range(1,Ntotals):
-        for j in range(1,Nsites):
-                delta[i] += (Qtotals[month][i,j]-Z[1,1,j])^2
-
+    """
+    for i in range(0,Ntotals): #adjusted for indexing and sifting through rows
+        for j in sites:
+                ##delta(i) = delta(i) + (Qtotals{month}(i,j)-Z(1,1,j))^2;
+                delta[i] += (Qtotals[## what is it here].iloc(i,j)-Z[j].iloc(year,month))^2
+    """
+    delta = []
+    for i in Qtotals.keys(): #shift windows
+        for j in Qtotals[i].keys(): #stations
+            for thisYear in (Qtotals[i][j]).index:
+                delta.append((Qtotals[i][j].iloc(thisYear,month)-Z[j].iloc(year,month))^2)
+    
     #Y = [[1:size(delta,1)]', delta ] 
     Y = pd.series(np.array(delta))
     #Y_ord = sortrows(Y, 2)
     Y_ord = Y.sort_values()
     ###What to do here??
-    KNN_id = Y_ord[1:K,1] 
+    KNN_id = Y_ord[1:K] #,1] #this is a list unlike matlab
 
     # computation of the weights
-    f = np.array(range(1,K))
+    f = np.array(range(0,K)) #python index adjusted
     f1 = 1/f
     W = f1 / sum(f1) 
 
     return KNN_id, W
-
-def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month ):
+    
+def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize ):
     # py = KNN_sampling( KKN_id, indices, Wcum, Qdaily, month )
     #
     # Selection of one KNN according to the probability distribution defined by
@@ -303,11 +311,23 @@ def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month ):
     #Randomly select one of the k-NN using the Lall and Sharma density estimator
     #r = rand 
     r = np.random.rand(1,1)
-    Wcum = [0, Wcum]  #not sure whats happening here
-    for i in range(0,len(Wcum)) : #python index adjusted
-        if (r > Wcum[i]) and (r <= Wcum[i+1]) :
-            KNNs = i 
+    #Wcum = [0, Wcum]  #not sure whats happening here
+    Wcum =  pd.concat([pd.Series([0]), Wcum], ignore_index=True)
+    KNNs = []
+    for thisWt,nexWt in zip(Wcum[:-1],Wcum[1:]): 
+        if (r > thisWt) and (r <= nexWt):
+            #KNNs.append(i) #is this really supposed to be more than 1? or a single value
+            #one at a time from octave run
+            KNNs = Wcum[Wcum == thisWt].index[0]
     yearID = KNN_id[KNNs]
+    
+    #magic to find the year and k
+    KNNmat = np.array(KNN_id).reshape(windowSize,len(Qdaily.columns),-1)
+    result = np.where(KNNmat == yearID)
+    listOfCoordinates = list(zip(result[0], result[1], result[2])) #3d array
+    k = listOfCoordinates[0][0] #use the first hit
+    year = listOfCoordinates[0][2]
+    #see KNN_identification() for the format and size
 
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
@@ -320,9 +340,9 @@ def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month ):
     # shift historical data to get nearest neighbor corresponding to yearID
     year = indices(yearID,1) #find the year that best fits
     k = indices(yearID,2) #+/- 7 day shift range that has high Weightage
+    
     shifted_Qdaily = Qdaily(k:k+nrows-1,:)
 
-    DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31]
     start = 365*(year-1) + sum(DaysPerMonth(1:(month-1)))+1
     dailyFlows = shifted_Qdaily(start:start+DaysPerMonth(month)-1,:)
 
@@ -332,15 +352,17 @@ def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month ):
 
     return [py, yearID] 
     """
-    #year = ##
-    #k = #offset
-    shifted_Qdaily = Qdaily.iloc[k:k+nrows,:]
-    dailyFlows = shifted_Qdaily[shifted_Qdaily.index.year== year and shifted_Qdaily.index.month == month].copy()
+    
+    shifted_Qdaily = Qdaily.iloc[k:k+nrows,:].copy()
+    shifted_Qdaily.index = Qdaily.index
+    dailyFlows = shifted_Qdaily[shifted_Qdaily.index.year== year and shifted_Qdaily.index.month == month]
     
     for thisColumn in dailyFlows.columns:
-        py[:,thisColumn] = dailyFlows[thisColumn]/sum(dailyFlows[thisColumn])
+        #py[:,thisColumn] = dailyFlows[thisColumn]/sum(dailyFlows[thisColumn])
+        dailyFlows[thisColumn] = dailyFlows[thisColumn]/dailyFlows[thisColumn].sum()
         
-    return [py, yearID]
+    #return [py, yearID]
+    return dailyFlows
 
 
 ##---------------------------------------------------------------------------------
@@ -352,7 +374,7 @@ def combined_generator(hist_data, nR, nY ) :
     # Evaluating the impact of alternative hydro-climate scenarios on transfer 
     # agreements: Practical improvement for generating synthetic streamflows, 
     # Journal of Water Resources Planning and Management, 139(4), 396–406.
-    Q_Qg = monthly_main(hist_data, nR, nY ) #dict of dicts of year-mon matrices
+    Q_Qg = monthly_main(hist_data, nR, nY ) #dict(realisation) of dicts(sites) of year-mon matrices
     Qh_mon = convert_data_to_monthly(hist_data)
     Qh_stns = list(Qh_mon.keys())
     Nyears = len(Qh_mon[Qh_stns[0]])
@@ -408,16 +430,17 @@ def combined_generator(hist_data, nR, nY ) :
     
     nrows = len(hist_data)
     Qtotals = {}
-    for k in range(1,15):
+    for k in range(0,15):
         Qmonthly_shifted = {}
-        for thisStn in Qh_mon.keys():
-            temp = (Qh_mon[thisStn].iloc[k:k+nrows,:]).copy()
-            temp.reset_index(inplace=True,drop=True)
-            #temp.index = Qh.index
-            temp.reindex_like(Qh_mon[thisStn])
-            #print(temp.head())
-            Qmonthly_shifted[thisStn] = temp
-        Qtotals[k] = Qmonthly_shifted
+        shifted_hist_data = (extra_hist_data.iloc[k:k+nrows,:]).copy()
+        shifted_hist_data.reset_index(inplace=True,drop=True)
+        #shifted_hist_data.reindex_like(hist_data)
+        shifted_hist_data.index = hist_data.index
+        #print(shifted_hist_data.head())
+        Qmonthly_shifted = convert_data_to_monthly(shifted_hist_data)
+        print(Qmonthly_shifted[list(Qmonthly_shifted.keys())[0]].info())
+        Qtotals[k] = Qmonthly_shifted #{window}{stations}{year-month}
+        
         #working till here
     #what should we do about indices here?
     
@@ -444,22 +467,29 @@ def combined_generator(hist_data, nR, nY ) :
         D(r,:,:) = dd'/Dt
     """
     
-    """
     for r in range(0,nR):
-    dd = []
-    for i, month in zip(range(0,nY*12), range(0,12)):
-        z = (Q_Qg[r]).iloc(i,:)#well there are headers and there might be a better way
-        print(z.head())
-        [KNN_id, W] = KNN_identification(Z, Qtotals, month)
-        py, _ = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month)
-        #d = zeros(Nsites,DaysPerMonth(month))
-        d = np.empty((Nsites,DaysPerMonth(month)))
-        for j in range(0:Nsites):
-            d[j,:] = py[:,j].*Z[1,1,j]
-        dd = [dd d] #what is this here? append?
-        
-        D[r,:,:] = dd'/Dt #is this compliment or ?
+        dd = []
+        for year, month in zip(range(0,nY), range(0,12)):
+            #z = (Q_Qg[r]).iloc(i,:)#Since month is passed, we should pass select realisation data
+            z = Q_Qg[r]
+            [KNN_id, W] = KNN_identification(Z, Qtotals, year, month)
+            Wcum = pd.series(np.array(W)).cumsum()
+            #py, _ = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month)
+            py = KNN_sampling(KNN_id, Wcum, hist_data, month, 15)
+            #d = zeros(Nsites,DaysPerMonth(month))
+            
+            #d = np.empty((Nsites,DaysPerMonth(month)))
+            d = []
+            for j in z.keys():
+                #d[j,:] = py[:,j]*Z[j].iloc[year,month]
+                d.append(np.mult(np.array(py[j]*np.array(z[j].iloc[year,month])))) #element wise multiplication alright?
+            #dd = [dd d] #what is this here? append?
+            print(d)
+    """        
+            D[r,:,:] = dd'/Dt #is this compliment or ?
     
     return D
     """
+
+
 ##---------------------------------------------------------------------------------
