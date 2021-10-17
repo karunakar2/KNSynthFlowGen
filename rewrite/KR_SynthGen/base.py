@@ -323,9 +323,11 @@ def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize, Y_ord):
     KNNs = []
     for thisWt,nexWt in zip(Wcum[:-1],Wcum[1:]): 
         if (r > thisWt) and (r <= nexWt):
+            print(r,thisWt,nexWt)
             #KNNs.append(i) #is this really supposed to be more than 1? or a single value
             #one at a time from octave run
             KNNs = Wcum[Wcum == thisWt].index[0]
+    print(KNNs)
     yearID = KNN_id[KNNs]
     print(yearID)
     
