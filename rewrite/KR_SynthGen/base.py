@@ -129,8 +129,9 @@ def monthly_main( hist_data:pd.DataFrame(), nR:int, nY:int ):
         #Qgen[r,:,k] = temp.reshape((1,temp.size,1))
         """
         #why do above transformations
-        for k in Qh_mon.keys(): #iterated over sites here
-            (Qgen[r])[k] = Qmon_gen
+        #for k in Qh_mon.keys(): #iterated over sites here
+        #    (Qgen[r])[k] = Qmon_gen
+        Qgen[r] = Qmon_gen
     
     #print(Qgen,'Qgen')
     ##print(len(Qgen),Qgen[1].shape)
@@ -276,11 +277,12 @@ def KNN_identification( Z, Qtotals, year, month, K=None ):
     for i in Qtotals.keys(): #shift windows
         for j in Qtotals[i].keys(): #stations
             for thisYear in list((Qtotals[i][j]).index):
-                print(Qtotals[i][j].iloc[thisYear,month], Z[j].iloc[year,month])
-                delta.append(math.pow((Qtotals[i][j].iloc[thisYear,month]-Z[j].iloc[year,month]),2))
-    
+                temp = Qtotals[i][j]
+                temp = temp[temp.index == thisYear][month].values[0]
+                delta.append(math.pow((temp-Z[j].iloc[year,month]),2))
+    #print(delta)
     #Y = [[1:size(delta,1)]', delta ] 
-    Y = pd.series(np.array(delta))
+    Y = pd.Series(np.array(delta))
     #Y_ord = sortrows(Y, 2)
     Y_ord = Y.sort_values()
     ###What to do here??
@@ -291,9 +293,9 @@ def KNN_identification( Z, Qtotals, year, month, K=None ):
     f1 = 1/f
     W = f1 / sum(f1) 
 
-    return KNN_id, W
+    return KNN_id, W, Y_ord
     
-def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize ):
+def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize, Y_ord):
     # py = KNN_sampling( KKN_id, indices, Wcum, Qdaily, month )
     #
     # Selection of one KNN according to the probability distribution defined by
@@ -325,9 +327,10 @@ def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize ):
             #one at a time from octave run
             KNNs = Wcum[Wcum == thisWt].index[0]
     yearID = KNN_id[KNNs]
+    print(yearID)
     
     #magic to find the year and k
-    KNNmat = np.array(KNN_id).reshape(windowSize,len(Qdaily.columns),-1)
+    KNNmat = np.array(Y_ord).reshape(windowSize,len(Qdaily.columns),-1)
     result = np.where(KNNmat == yearID)
     listOfCoordinates = list(zip(result[0], result[1], result[2])) #3d array
     k = listOfCoordinates[0][0] #use the first hit
@@ -443,7 +446,7 @@ def combined_generator(hist_data, nR, nY ) :
         shifted_hist_data.index = hist_data.index
         #print(shifted_hist_data.head())
         Qmonthly_shifted = convert_data_to_monthly(shifted_hist_data)
-        #print(Qmonthly_shifted[list(Qmonthly_shifted.keys())[0]].info())
+        ##print(Qmonthly_shifted[list(Qmonthly_shifted.keys())[0]].info())
         Qtotals[k] = Qmonthly_shifted #{window}{stations}{year-month}
         
         #working till here
@@ -474,13 +477,13 @@ def combined_generator(hist_data, nR, nY ) :
     
     for r in range(0,nR):
         dd = []
-        for year, month in zip(range(0,nY), range(0,12)):
+        for year, month in zip(range(0,nY), range(1,13)):
             #z = (Q_Qg[r]).iloc[i,:]#Since month is passed, we should pass select realisation data
             z = Q_Qg[r]
-            [KNN_id, W] = KNN_identification(z, Qtotals, year, month)
-            Wcum = pd.series(np.array(W)).cumsum()
+            [KNN_id, W, Y_ord] = KNN_identification(z, Qtotals, year, month)
+            Wcum = pd.Series(np.array(W)).cumsum()
             #py, _ = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month)
-            py = KNN_sampling(KNN_id, Wcum, hist_data, month, 15)
+            py = KNN_sampling(KNN_id, Wcum, hist_data, month, 15, Y_ord)
             #d = zeros(Nsites,DaysPerMonth(month))
             
             #d = np.empty((Nsites,DaysPerMonth(month)))
