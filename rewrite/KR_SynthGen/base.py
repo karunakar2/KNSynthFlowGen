@@ -439,7 +439,7 @@ def combined_generator(hist_data, nR, nY ) :
     for r in range(0,nR):
     dd = []
     for i, month in zip(range(0,nY*12), range(0,12)):
-        z = Q_Qg[r,i,:]
+        z = (Q_Qg[r])[i,:]
         [KNN_id, W] = KNN_identification(Z, Qtotals, month)
         py, _ = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month)
         #d = zeros(Nsites,DaysPerMonth(month))
