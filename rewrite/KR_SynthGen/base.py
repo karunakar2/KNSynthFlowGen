@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import date
 
 #Validated functions
+#Sum aggregates the daily data to monthly values
 def convert_data_to_monthly(df:pd.DataFrame()) ->{'station name':pd.DataFrame()}:
     mDf = df.groupby([lambda x: x.year, lambda x: x.month]).sum()
     #print(mDf.head())
@@ -31,6 +32,23 @@ def convert_data_to_monthly(df:pd.DataFrame()) ->{'station name':pd.DataFrame()}
         #print(qMonthly[thisSite].head())
     return qMonthly
 
+#patches the data in front and end (N+D+N days) to sift through adjustments
+def patchData(hist_data:pd.DataFrame(), period:int, debug:bool=0):
+    preDf = hist_data.tail(period).copy().reset_index(drop=True)
+    preDf['Date'] = pd.date_range(hist_data.index.min(), freq='-1D', periods=period)
+    preDf.set_index('Date',inplace=True)
+    preDf.sort_values(by=['Date'],inplace=True)
+    posDf = hist_data.head(period).copy().reset_index(drop=True)
+    posDf['Date'] = pd.date_range(hist_data.index.max(), periods=period)
+    posDf.set_index('Date',inplace=True)
+    extra_hist_data = pd.concat([preDf,hist_data,posDf])
+    if debug != 0:
+        print(extra_hist_data.head())
+        print(extra_hist_data.tail())
+        print(len(hist_data),len(extra_hist_data))
+    
+    return extra_hist_data
+
 ##-------------------------------------------------------------------------------
 ##Unverified functions
 eps = np.finfo(float).eps
@@ -40,9 +58,9 @@ def chol_corr(Z):
 # http://www.mathworks.com/matlabcentral/answers/6057-repair-non-positive-definite-correlation-matrix
 # rank-1 update followed by rescaling to get unit diagonal entries
     U = None
-    R = np.corrcoef(Z);
+    R = np.corrcoef(Z)
     try :
-        U = np.linalg.cholesky(R);
+        U = np.linalg.cholesky(R)
     #will raise LinAlgError if the matrix is not positive definite.
     #https://stackoverflow.com/a/16266736
     except Exception as er:
@@ -50,10 +68,10 @@ def chol_corr(Z):
             posDef = False
             while posDef:
                 try :
-                    k = min([min(np.real(np.linalg.eig(R))) -1*eps]);
-                    R = R - k*np.eye(R.size);
-                    R = R/R[1,1];
-                    U = np.linalg.cholesky(R);
+                    k = min([min(np.real(np.linalg.eig(R))) -1*eps])
+                    R = R - k*np.eye(R.size)
+                    R = R/R[0,0] #adjusted for indices
+                    U = np.linalg.cholesky(R)
                     posDef = False
                 except Exception as err:
                     if err == 'LinAlgError':
@@ -64,19 +82,19 @@ def chol_corr(Z):
                 print(er)
     return U
 
-def monthly_main( hist_data, nR, nY ):
+def monthly_main( hist_data:pd.DataFrame(), nR:int, nY:int ):
     # from daily to monthly
-    Qh = convert_data_to_monthly(hist_data) ;
+    Qh_mon = convert_data_to_monthly(hist_data) 
     Nsites = len(Qh)
 
-    qq ={}
+    ##qq ={}
     #qq = np.empty((nR,nY*12,Nsites)).fill(np.nan)
     """
     for r in range(0,nR):
-        Qs = monthly_gen(Qh, nY);
+        Qs = monthly_gen(Qh, nY)
         for k in range(1,Nsites):
             #print(len(Qs[k]),len(Qs[k][1]))
-            #qq{k}(r,:) = reshape(Qs{k}',1,[]);
+            #qq{k}(r,:) = reshape(Qs{k}',1,[])
             temp = np.ravel(Qs[k].T) #Qs[k] should be 12 elements but returns 816 i.e. (12months *68Years) here
             try:
                 len(qq[k])
@@ -85,22 +103,22 @@ def monthly_main( hist_data, nR, nY ):
             qq[k][r,:] = temp
     
     # output matrix
-    #Qgen = nan(nR,nY*12,Nsites) ;
+    #Qgen = nan(nR,nY*12,Nsites) 
     Qgen = np.empty((nR,nY*12,Nsites)) #.fill(np.nan)
     for k in range(1,Nsites):
-        Qgen[:,:,k]= qq[k] ;
+        Qgen[:,:,k]= qq[k] 
     return Qgen
     """
     # output matrix
-    #Qgen = nan(nR,nY*12,Nsites) ;
+    #Qgen = nan(nR,nY*12,Nsites) 
     ##Qgen = np.empty((nR,nY*12,Nsites)) #.fill(np.nan)
     Qgen = {}
     for r in range(0,nR):
-        Qs = monthly_gen(Qh, nY);
+        Qs = monthly_gen(Qh_mon, nY)
         temp = []
         for k in range(0,Nsites):
             #print(len(Qs[k]),len(Qs[k][1]))
-            #qq{k}(r,:) = reshape(Qs{k}',1,[]);
+            #qq{k}(r,:) = reshape(Qs{k}',1,[])
             temp.append(np.ravel(Qs[k].T))
         temp = np.array(temp).T
         #print(temp.shape)
@@ -112,39 +130,42 @@ def monthly_main( hist_data, nR, nY ):
     return Qgen
 
 def monthly_gen(q_historical, num_years, p=None, n=None):
-    q_h_stns = list(q_historical.keys())
-    nPoints = len(q_h_stns) #no of donor stations
-    nQ_historical = len(q_historical[q_h_stns[1]]); #no of years of data
+    """
+    q_historical is monthly
+    """
+    qH_stns = list(q_historical.keys()) #keys are station names
+    nPoints = len(qH_stns) #no of donor stations
+    nQ_historical = len(q_historical[qH_stns[0]]) #no of years(with months) of data
     #future - check all dfs are of same size in qhistorical
     
-    num_years = num_years+1; # this adjusts for the new corr technique
+    num_years = num_years+1 # this adjusts for the new corr technique
     if p == None and n == None:
-        nQ = nQ_historical;
+        nQ = nQ_historical
     else:
-        n = n-1; # (input n=2 to double the frequency, i.e. repmat 1 additional time)
-        nQ = nQ_historical + math.floor(p*nQ_historical+1)*n;
+        n = n-1 # (input n=2 to double the frequency, i.e. repmat 1 additional time)
+        nQ = nQ_historical + math.floor(p*nQ_historical+1)*n
     
-    #Random_Matrix = randi(nQ, num_years, 12);
+    #Random_Matrix = randi(nQ, num_years, 12)
     #Random_Matrix = np.random.randint(num_years, size=(nQ,12))
     Random_Matrix = np.random.randint(nQ, size=(num_years,12))
     #print(Random_Matrix.shape,'rmsize')
     
     Qs = {}
-    for k in range(0,nPoints):
-        Q_matrix = q_historical[q_h_stns[k]]
+    for k in q_historical.keys():
+        Q_matrix = q_historical[k]
         #print(Q_matrix.shape)
         """
         if  p != None and n != None:
-            temp = sort(Q_matrix);
-            app = temp(1:ceil(p*nQ_historical),:); # find lowest p# of values for each month
-            Q_matrix = vertcat(Q_matrix, repmat(app, n, 1));
+            temp = sort(Q_matrix)
+            app = temp(1:ceil(p*nQ_historical),:) # find lowest p# of values for each month
+            Q_matrix = vertcat(Q_matrix, repmat(app, n, 1))
         """
         logQ = Q_matrix.apply(lambda x: np.log(x))
-        monthly_mean = [];
-        monthly_stdev = [];
-        Z = [];
-        for i in range(1,13):
-            m_series = logQ[i].values
+        monthly_mean = []
+        monthly_stdev = []
+        Z = []
+        for mon in logQ.columns: 
+            m_series = logQ[mon].values
             m_mean = np.mean(m_series)
             m_stdev = np.std(m_series)
             Z.append((m_series - m_mean) / m_stdev) #zscore here and double dim due to logQ[i] series
@@ -153,10 +174,10 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
         Z = np.array(Z) #list of lists to array format
         #print(Z.shape)
         
-        #Z_vector = reshape(Z',1,[]);
+        #Z_vector = reshape(Z',1,[])
         Z_vector = np.ravel(Z.T)
         Z_JulyToJune = Z_vector[6:-6] #zero index so starts at 6, uptill last 6 months
-        #Z_shifted = reshape(Z_vector(7:(nQ*12-6)),12,[])'; #july of start year to june of end year
+        #Z_shifted = reshape(Z_vector(7:(nQ*12-6)),12,[])' #july of start year to june of end year
         Z_shifted = np.transpose(Z_JulyToJune.reshape(-1,12))
         #print(Z_shifted.shape,'zshiftshape')
         
@@ -169,20 +190,20 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
         Qs_uncorr = []
         for i in range(0,12): #python index related
             #print('z RM',Z.shape,Random_Matrix.shape)
-            #Qs_uncorr[:,i] = Z[Random_Matrix[:,i], i];
+            #Qs_uncorr[:,i] = Z[Random_Matrix[:,i], i]
             ##Qs_uncorr.append(Z[Random_Matrix[:,i],i])
             Qs_uncorr.append(Z[i,Random_Matrix[:,i]])
         Qs_uncorr = np.array(Qs_uncorr).T
-        #Qs_corr(:,:) = Qs_uncorr(:,:)*U;
+        #Qs_corr(:,:) = Qs_uncorr(:,:)*U
         #print('c',Qs_uncorr.shape)
         Qs_corr = np.dot(Qs_uncorr,U)
         
-        #Qs_uncorr_vector = reshape(Qs_uncorr(:,:)',1,[]);
+        #Qs_uncorr_vector = reshape(Qs_uncorr(:,:)',1,[])
         Qs_uncorr_vector = np.ravel(Qs_uncorr)
-        #Qs_uncorr_shifted(:,:) = reshape(Qs_uncorr_vector(7:(num_years*12-6)),12,[])';
+        #Qs_uncorr_shifted(:,:) = reshape(Qs_uncorr_vector(7:(num_years*12-6)),12,[])'
         Qs_uncorr_vector_JJ = Qs_uncorr_vector[6:-6]
         Qs_uncorr_shifted = Qs_uncorr_vector_JJ.reshape(-1,12)
-        #Qs_corr_shifted(:,:) = Qs_uncorr_shifted(:,:)*U_shifted;
+        #Qs_corr_shifted(:,:) = Qs_uncorr_shifted(:,:)*U_shifted
         Qs_corr_shifted = np.dot(Qs_uncorr_shifted,U_shifted)
 
         Qs_log = np.empty((len( Qs_corr_shifted ),len( Qs_corr_shifted [0])))
@@ -194,8 +215,8 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
 
         Qsk = np.empty((len( Qs_log ),len( Qs_log[0])))
         for i in range(0,12):
-            Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i]);
-        Qs[k] = Qsk;
+            Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i])
+        Qs[k] = Qsk
     
     #print(Qs)
     return Qs
@@ -226,29 +247,29 @@ def KNN_identification( Z, Qtotals, month, K=None ):
     # number of days in the month being disaggregated. Patterns are all
     # historical sequences of length ndays beginning within 7 days before or
     # after the 1st day of the month being disaggregated.
-    Ntotals = len(Qtotals[month]);
+    Ntotals = len(Qtotals[month])
     if K == None:
         K = round(sqrt(Ntotals))
 
-    # nearest neighbors identification;
+    # nearest neighbors identification
     # only look at neighbors from the same month +/- 7 days
-    Nsites = len(Qtotals[month][0]);
+    Nsites = len(Qtotals[month][0])
     delta = np.empty((Ntotals,1)) # first and last month have 7 less possible shifts
     for i in range(1,Ntotals):
         for j in range(1,Nsites):
-                delta[i] += (Qtotals[month][i,j]-Z[1,1,j])^2;
+                delta[i] += (Qtotals[month][i,j]-Z[1,1,j])^2
 
-    #Y = [[1:size(delta,1)]', delta ] ;
+    #Y = [[1:size(delta,1)]', delta ] 
     Y = pd.series(np.array(delta))
-    #Y_ord = sortrows(Y, 2);
+    #Y_ord = sortrows(Y, 2)
     Y_ord = Y.sort_values()
     ###What to do here??
-    KNN_id = Y_ord[1:K,1] ;
+    KNN_id = Y_ord[1:K,1] 
 
     # computation of the weights
     f = np.array(range(1,K))
-    f1 = 1/f;
-    W = f1 / sum(f1) ;
+    f1 = 1/f
+    W = f1 / sum(f1) 
 
     return KNN_id, W
 
@@ -273,37 +294,37 @@ def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month ):
     # MatteoG 31/05/2013
 
     #Randomly select one of the k-NN using the Lall and Sharma density estimator
-    #r = rand ;
+    #r = rand 
     r = np.random.rand(1,1)
-    Wcum = [0, Wcum] ; #not sure whats happening here
-    for i in range( 0,len(Wcum)) : #python index adjusted
+    Wcum = [0, Wcum]  #not sure whats happening here
+    for i in range(0,len(Wcum)) : #python index adjusted
         if (r > Wcum[i]) and (r <= Wcum[i+1]) :
-            KNNs = i ;
+            KNNs = i 
     yearID = KNN_id[KNNs]
 
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
     nrows = len(Qdaily)
-    ##Qdaily = [Qdaily[nrows-7:nrows,:]; Qdaily; Qdaily[1:8,:]];
+    ##Qdaily = [Qdaily[nrows-7:nrows,:] Qdaily Qdaily[1:8,:]]
     Qdaily = patchData(Qdaily,7)
     
     #well this needs fixing
-"""
+    """
     # shift historical data to get nearest neighbor corresponding to yearID
-    year = indices(yearID,1); #find the year that best fits
-    k = indices(yearID,2); #+/- 7 day shift range that has high Weightage
-    shifted_Qdaily = Qdaily(k:k+nrows-1,:);
+    year = indices(yearID,1) #find the year that best fits
+    k = indices(yearID,2) #+/- 7 day shift range that has high Weightage
+    shifted_Qdaily = Qdaily(k:k+nrows-1,:)
 
-    DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31];
-    start = 365*(year-1) + sum(DaysPerMonth(1:(month-1)))+1;
-    dailyFlows = shifted_Qdaily(start:start+DaysPerMonth(month)-1,:);
+    DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31]
+    start = 365*(year-1) + sum(DaysPerMonth(1:(month-1)))+1
+    dailyFlows = shifted_Qdaily(start:start+DaysPerMonth(month)-1,:)
 
-    py = zeros(size(dailyFlows));
+    py = zeros(size(dailyFlows))
     for i=1:size(Qdaily,2)
-        py(:,i) = dailyFlows(:,i)/sum(dailyFlows(:,i));
+        py(:,i) = dailyFlows(:,i)/sum(dailyFlows(:,i))
 
     return [py, yearID] 
-"""
+    """
     #year = ##
     #k = #offset
     shifted_Qdaily = Qdaily.iloc[k:k+nrows,:]
@@ -314,24 +335,9 @@ def KNN_sampling( KNN_id, indices, Wcum, Qdaily, month ):
         
     return [py, yearID]
 
-def patchData(hist_data, period, debug=0):
-    preDf = hist_data.tail(period).copy().reset_index(drop=True)
-    preDf['Date'] = pd.date_range(hist_data.index.min(), freq='-1D', periods=period)
-    preDf.set_index('Date',inplace=True)
-    preDf.sort_values(by=['Date'],inplace=True)
-    posDf = hist_data.head(period).copy().reset_index(drop=True)
-    posDf['Date'] = pd.date_range(hist_data.index.max(), periods=period)
-    posDf.set_index('Date',inplace=True)
-    extra_hist_data = pd.concat([preDf,hist_data,posDf])
-    if debug != 0:
-        print(extra_hist_data.head())
-        print(extra_hist_data.tail())
-        print(len(hist_data),len(extra_hist_data))
-    
-    return extra_hist_data
 
 ##---------------------------------------------------------------------------------
-DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31]
+DaysPerMonth = [31,28,31,30,31,30,31,31,30,31,30,31]
 def combined_generator(hist_data, nR, nY ) :
     
     # generation of monthly data via Kirsch et al. (2013):
@@ -339,8 +345,8 @@ def combined_generator(hist_data, nR, nY ) :
     # Evaluating the impact of alternative hydro-climate scenarios on transfer 
     # agreements: Practical improvement for generating synthetic streamflows, 
     # Journal of Water Resources Planning and Management, 139(4), 396–406.
-    QQg = monthly_main(hist_data, nR, nY );
-    Qh = convert_data_to_monthly(hist_data);
+    Q_Qg = monthly_main(hist_data, nR, nY )
+    Qh = convert_data_to_monthly(hist_data)
     Qh_stns = list(Qh.keys())
     Nyears = len(Qh[Qh_stns[0]])
 
@@ -354,43 +360,43 @@ def combined_generator(hist_data, nR, nY ) :
     # the selected neighbor to match the synthetic monthly total. To
     # disaggregate Jan Flows, consider all historical January totals +/- 7
     # days, etc.
-    ###Dt = 3600*24;
-    ###DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31];
+    ###Dt = 3600*24
+    ###DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31]
     ###D = np.empty((nR,365*nY,Nsites))
 
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
     
-    #extra_hist_data = [hist_data[nrows-7:nrows,:]; hist_data; hist_data(1:8,:)];
+    #extra_hist_data = [hist_data[nrows-7:nrows,:] hist_data hist_data(1:8,:)]
     extra_hist_data = patchData(hist_data,7)
     
 """
     # find monthly totals for all months +/- 7 days
     for i=1:12
-        count = 1;
+        count = 1
         if i == 1 || i == 12
-            nTotals = Nyears*15-7; # 7 less shifts in first and last month
+            nTotals = Nyears*15-7 # 7 less shifts in first and last month
         else
-            nTotals = Nyears*15;
-        Qmonthly_shifted = zeros(nTotals,Nsites);
-        indices = zeros(nTotals,2);
+            nTotals = Nyears*15
+        Qmonthly_shifted = zeros(nTotals,Nsites)
+        indices = zeros(nTotals,2)
         for k = 1:15
-            shifted_hist_data = extra_hist_data(k:k+nrows-1,:);
-            Qh = convert_data_to_monthly(shifted_hist_data);
+            shifted_hist_data = extra_hist_data(k:k+nrows-1,:)
+            Qh = convert_data_to_monthly(shifted_hist_data)
             for j=1:Nsites
                 if i == 1 && k<8
-                    Qh{j} = Qh{j}(2:size(Qh{j},1),i); # remove first year
+                    Qh{j} = Qh{j}(2:size(Qh{j},1),i) # remove first year
                 elseif i == 12 && k>8
-                    Qh{j} = Qh{j}(1:(size(Qh{j},1)-1),i); # remove last year
-                Qmonthly_shifted(count:(count+size(Qh{j},1)-1),j) = Qh{j}(:,1);
+                    Qh{j} = Qh{j}(1:(size(Qh{j},1)-1),i) # remove last year
+                Qmonthly_shifted(count:(count+size(Qh{j},1)-1),j) = Qh{j}(:,1)
             if i == 1 && k<8
-                indices(count:(count+size(Qh{j},1)-1),1) = 2:(size(Qh{j},1)+1);
+                indices(count:(count+size(Qh{j},1)-1),1) = 2:(size(Qh{j},1)+1)
             else
-                indices(count:(count+size(Qh{j},1)-1),1) = 1:size(Qh{j},1);
-            indices(count:(count+size(Qh{j},1)-1),2) = k;
-            count = count + size(Qh{j},1);
-        Qtotals{i} = Qmonthly_shifted;
-        Qindices{i} = indices;
+                indices(count:(count+size(Qh{j},1)-1),1) = 1:size(Qh{j},1)
+            indices(count:(count+size(Qh{j},1)-1),2) = k
+            count = count + size(Qh{j},1)
+        Qtotals{i} = Qmonthly_shifted
+        Qindices{i} = indices
     """
     nrows = len(hist_data)
     Qtotals = {}
@@ -405,36 +411,36 @@ def combined_generator(hist_data, nR, nY ) :
     
     """
     for r=1:nR
-        dd = [];
+        dd = []
         for i=1:nY*12
             #monthly value for all sites
-            Z = QQg[r,i,:];
+            Z = Q_Qg[r,i,:]
             #KNN and weights
-            month = mod(i,12);
+            month = mod(i,12)
             if month == 0
-                month = 12;
-            [KNN_id, W] = KNN_identification(Z, Qtotals, month);
-            Wcum = cumsum(W);
+                month = 12
+            [KNN_id, W] = KNN_identification(Z, Qtotals, month)
+            Wcum = cumsum(W)
                 
             #sampling of one KNN
-            py = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month);
-            d = zeros(Nsites,DaysPerMonth(month));
+            py = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month)
+            d = zeros(Nsites,DaysPerMonth(month))
             for j=1:Nsites
-                d(j,:) = py(:,j).*Z(1,1,j);
-            dd = [dd d];
+                d(j,:) = py(:,j).*Z(1,1,j)
+            dd = [dd d]
         
-        D(r,:,:) = dd'/Dt;
+        D(r,:,:) = dd'/Dt
 """
     for r in range(0,nR):
     dd = []
     for i, month in zip(range(0,nY*12), range(0,12)):
-        z = QQg[r,i,:]
+        z = Q_Qg[r,i,:]
         [KNN_id, W] = KNN_identification(Z, Qtotals, month)
-        py, _ = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month);
-        #d = zeros(Nsites,DaysPerMonth(month));
+        py, _ = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month)
+        #d = zeros(Nsites,DaysPerMonth(month))
         d = np.empty((Nsites,DaysPerMonth(month)))
         for j in range(0:Nsites):
-            d[j,:] = py[:,j].*Z[1,1,j];
+            d[j,:] = py[:,j].*Z[1,1,j]
         dd = [dd d] #what is this here? append?
         
         D[r,:,:] = dd'/Dt #is this compliment or ?
