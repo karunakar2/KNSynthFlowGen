@@ -287,10 +287,12 @@ def KNN_identification( Z, Qtotals, year, month, K=None ):
     Y_ord = Y.sort_values()
     ###What to do here??
     KNN_id = Y_ord[1:K] #,1] #this is a list unlike matlab
+    #print(KNN_id)
 
     # computation of the weights
-    f = np.array(range(0,K)) #python index adjusted
+    f = np.array(range(1,K+1)) #Watch this, dont adjust index to zero, it will yeild infinity
     f1 = 1/f
+    #print(f1)
     W = f1 / sum(f1) 
 
     return KNN_id, W, Y_ord
@@ -317,18 +319,19 @@ def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize, Y_ord):
 
     #Randomly select one of the k-NN using the Lall and Sharma density estimator
     #r = rand 
-    r = np.random.rand(1,1)
+    r = np.random.rand(1,1)[0,0]
     #Wcum = [0, Wcum]  #not sure whats happening here
     Wcum =  pd.concat([pd.Series([0]), Wcum], ignore_index=True)
     KNNs = []
     for thisWt,nexWt in zip(Wcum[:-1],Wcum[1:]): 
+        #print(r,thisWt,nexWt)
         if (r > thisWt) and (r <= nexWt):
-            print(r,thisWt,nexWt)
             #KNNs.append(i) #is this really supposed to be more than 1? or a single value
             #one at a time from octave run
-            KNNs = Wcum[Wcum == thisWt].index[0]
-    print(KNNs)
-    yearID = KNN_id[KNNs]
+            KNNs = Wcum[Wcum == thisWt].index[0] ##something is wrong here
+    #print(KNNs)
+    thisKNN_id = (KNN_id.copy()).reset_index(drop=True)
+    yearID = thisKNN_id[KNNs]
     print(yearID)
     
     #magic to find the year and k
@@ -364,8 +367,9 @@ def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize, Y_ord):
     """
     
     shifted_Qdaily = Qdaily.iloc[k:k+nrows,:].copy()
-    shifted_Qdaily.index = Qdaily.index
-    dailyFlows = shifted_Qdaily[shifted_Qdaily.index.year== year and shifted_Qdaily.index.month == month]
+    #shifted_Qdaily.index = Qdaily.index
+    shifted_Qdaily.index = pd.date_range(Qdaily.index.min(), periods=len(shifted_Qdaily)) #brute forcing here?
+    dailyFlows = shifted_Qdaily[(shifted_Qdaily.index.year == year) & (shifted_Qdaily.index.month == month)]
     
     for thisColumn in dailyFlows.columns:
         #py[:,thisColumn] = dailyFlows[thisColumn]/sum(dailyFlows[thisColumn])
