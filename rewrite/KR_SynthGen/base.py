@@ -85,7 +85,7 @@ def chol_corr(Z):
 def monthly_main( hist_data:pd.DataFrame(), nR:int, nY:int ):
     # from daily to monthly
     Qh_mon = convert_data_to_monthly(hist_data) 
-    Nsites = len(Qh)
+    Nsites = len(Qh_mon)
 
     ##qq ={}
     #qq = np.empty((nR,nY*12,Nsites)).fill(np.nan)
@@ -114,6 +114,7 @@ def monthly_main( hist_data:pd.DataFrame(), nR:int, nY:int ):
     ##Qgen = np.empty((nR,nY*12,Nsites)) #.fill(np.nan)
     Qgen = {}
     for r in range(0,nR):
+        Qgen[r] = {}
         Qmon_gen = monthly_gen(Qh_mon, nY) #formerly Qs
         """
         temp = []
@@ -127,11 +128,12 @@ def monthly_main( hist_data:pd.DataFrame(), nR:int, nY:int ):
         #Qgen[r,:,k] = temp.reshape((1,temp.size,1))
         """
         #why do above transformations
-        Qgen[k] = Qmon_gen
+        for k in Qh_mon.keys(): #iterated over sites here
+            (Qgen[r])[k] = Qmon_gen
     
     #print(Qgen,'Qgen')
     ##print(len(Qgen),Qgen[1].shape)
-    return Qgen
+    return Qgen #{realisation}{site}{year,month} - years in rows
 
 def monthly_gen(q_historical, num_years, p=None, n=None):
     """
@@ -220,7 +222,7 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
         Qsk = np.empty((len( Qs_log ),len( Qs_log[0])))
         for i in range(0,12):
             Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i])
-        QskDf = pd.DataFrame(Qsk, columns = Q_matrix.columns, index = Q_matrix.index)
+        QskDf = pd.DataFrame(Qsk, columns = Q_matrix.columns) ##, index = Q_matrix.index)
         Qs[k] = QskDf
     
     #print(Qs)
@@ -350,10 +352,10 @@ def combined_generator(hist_data, nR, nY ) :
     # Evaluating the impact of alternative hydro-climate scenarios on transfer 
     # agreements: Practical improvement for generating synthetic streamflows, 
     # Journal of Water Resources Planning and Management, 139(4), 396–406.
-    Q_Qg = monthly_main(hist_data, nR, nY )
+    Q_Qg = monthly_main(hist_data, nR, nY ) #dict of dicts of year-mon matrices
     Qh_mon = convert_data_to_monthly(hist_data)
-    Qh_stns = list(Qh.keys())
-    Nyears = len(Qh[Qh_stns[0]])
+    Qh_stns = list(Qh_mon.keys())
+    Nyears = len(Qh_mon[Qh_stns[0]])
 
     # disaggregation from monthly to daily time step as in Nowak et al. (2010):
     # Nowak, K., Prairie, J., Rajagopalan, B., & Lall, U. (2010). 
@@ -375,7 +377,7 @@ def combined_generator(hist_data, nR, nY ) :
     #extra_hist_data = [hist_data[nrows-7:nrows,:] hist_data hist_data(1:8,:)]
     extra_hist_data = patchData(hist_data,7)
     
-"""
+    """
     # find monthly totals for all months +/- 7 days
     for i=1:12
         count = 1
@@ -403,15 +405,20 @@ def combined_generator(hist_data, nR, nY ) :
         Qtotals{i} = Qmonthly_shifted
         Qindices{i} = indices
     """
+    
     nrows = len(hist_data)
     Qtotals = {}
     for k in range(1,15):
-        Qmonthly_shifted = (Qh_mon.iloc[k:k+nrows,:]).copy()
-        Qmonthly_shifted.reset_index(inplace=True,drop=True)
-        #Qmonthly_shifted.index = Qh.index
-        Qmonthly_shifted.reindex_like(Qh_mon)
+        Qmonthly_shifted = {}
+        for thisStn in Qh_mon.keys():
+            temp = (Qh_mon[thisStn].iloc[k:k+nrows,:]).copy()
+            temp.reset_index(inplace=True,drop=True)
+            #temp.index = Qh.index
+            temp.reindex_like(Qh_mon[thisStn])
+            #print(temp.head())
+            Qmonthly_shifted[thisStn] = temp
         Qtotals[k] = Qmonthly_shifted
-        
+        #working till here
     #what should we do about indices here?
     
     """
@@ -435,11 +442,14 @@ def combined_generator(hist_data, nR, nY ) :
             dd = [dd d]
         
         D(r,:,:) = dd'/Dt
-"""
+    """
+    
+    """
     for r in range(0,nR):
     dd = []
     for i, month in zip(range(0,nY*12), range(0,12)):
-        z = (Q_Qg[r])[i,:]
+        z = (Q_Qg[r]).iloc(i,:)#well there are headers and there might be a better way
+        print(z.head())
         [KNN_id, W] = KNN_identification(Z, Qtotals, month)
         py, _ = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month)
         #d = zeros(Nsites,DaysPerMonth(month))
@@ -451,4 +461,5 @@ def combined_generator(hist_data, nR, nY ) :
         D[r,:,:] = dd'/Dt #is this compliment or ?
     
     return D
+    """
 ##---------------------------------------------------------------------------------
