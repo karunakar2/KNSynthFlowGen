@@ -351,7 +351,7 @@ def combined_generator(hist_data, nR, nY ) :
     # agreements: Practical improvement for generating synthetic streamflows, 
     # Journal of Water Resources Planning and Management, 139(4), 396–406.
     Q_Qg = monthly_main(hist_data, nR, nY )
-    Qh = convert_data_to_monthly(hist_data)
+    Qh_mon = convert_data_to_monthly(hist_data)
     Qh_stns = list(Qh.keys())
     Nyears = len(Qh[Qh_stns[0]])
 
@@ -406,10 +406,10 @@ def combined_generator(hist_data, nR, nY ) :
     nrows = len(hist_data)
     Qtotals = {}
     for k in range(1,15):
-        Qmonthly_shifted = (Qh.iloc[k:k+nrows,:]).copy()
+        Qmonthly_shifted = (Qh_mon.iloc[k:k+nrows,:]).copy()
         Qmonthly_shifted.reset_index(inplace=True,drop=True)
         #Qmonthly_shifted.index = Qh.index
-        Qmonthly_shifted.reindex_like(Qh)
+        Qmonthly_shifted.reindex_like(Qh_mon)
         Qtotals[k] = Qmonthly_shifted
         
     #what should we do about indices here?
