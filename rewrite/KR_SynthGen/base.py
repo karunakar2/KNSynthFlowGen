@@ -114,7 +114,8 @@ def monthly_main( hist_data:pd.DataFrame(), nR:int, nY:int ):
     ##Qgen = np.empty((nR,nY*12,Nsites)) #.fill(np.nan)
     Qgen = {}
     for r in range(0,nR):
-        Qs = monthly_gen(Qh_mon, nY)
+        Qmon_gen = monthly_gen(Qh_mon, nY) #formerly Qs
+        """
         temp = []
         for k in range(0,Nsites):
             #print(len(Qs[k]),len(Qs[k][1]))
@@ -124,6 +125,9 @@ def monthly_main( hist_data:pd.DataFrame(), nR:int, nY:int ):
         #print(temp.shape)
         Qgen[r] = temp
         #Qgen[r,:,k] = temp.reshape((1,temp.size,1))
+        """
+        #why do above transformations
+        Qgen[k] = Qmon_gen
     
     #print(Qgen,'Qgen')
     ##print(len(Qgen),Qgen[1].shape)
@@ -216,7 +220,8 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
         Qsk = np.empty((len( Qs_log ),len( Qs_log[0])))
         for i in range(0,12):
             Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i])
-        Qs[k] = Qsk
+        QskDf = pd.DataFrame(Qsk, columns = Q_matrix.columns, index = Q_matrix.index)
+        Qs[k] = QskDf
     
     #print(Qs)
     return Qs
