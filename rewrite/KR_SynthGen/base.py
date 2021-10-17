@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import pandas as pd
 
@@ -251,6 +252,9 @@ def KNN_identification( Z, Qtotals, year, month, K=None ):
     # MatteoG 31/05/2013
 
     ##Ntotals is calc in two steps here
+    wShifts = list(Qtotals.keys())
+    nSites = list(Qtotals[wShifts[0]].keys())
+    Ntotals = len(wShifts)*len(Qtotals[wShifts[0]][nSites[0]]) #this is a short circuit
     
     # Ntotals is the number of historical monthly patterns used for disaggregation.
     # A pattern is a sequence of ndays of daily flows, where ndays is the
@@ -258,7 +262,7 @@ def KNN_identification( Z, Qtotals, year, month, K=None ):
     # historical sequences of length ndays beginning within 7 days before or
     # after the 1st day of the month being disaggregated.
     if K == None:
-        K = round(sqrt(Ntotals))
+        K = math.floor(math.sqrt(Ntotals))
 
     # nearest neighbors identification
     # only look at neighbors from the same month +/- 7 days
@@ -266,13 +270,14 @@ def KNN_identification( Z, Qtotals, year, month, K=None ):
     for i in range(0,Ntotals): #adjusted for indexing and sifting through rows
         for j in sites:
                 ##delta(i) = delta(i) + (Qtotals{month}(i,j)-Z(1,1,j))^2;
-                delta[i] += (Qtotals[## what is it here].iloc(i,j)-Z[j].iloc(year,month))^2
+                delta[i] += (Qtotals[## what is it here].iloc[i,j]-Z[j].iloc[year,month])^2
     """
     delta = []
     for i in Qtotals.keys(): #shift windows
         for j in Qtotals[i].keys(): #stations
-            for thisYear in (Qtotals[i][j]).index:
-                delta.append((Qtotals[i][j].iloc(thisYear,month)-Z[j].iloc(year,month))^2)
+            for thisYear in list((Qtotals[i][j]).index):
+                print(Qtotals[i][j].iloc[thisYear,month], Z[j].iloc[year,month])
+                delta.append(math.pow((Qtotals[i][j].iloc[thisYear,month]-Z[j].iloc[year,month]),2))
     
     #Y = [[1:size(delta,1)]', delta ] 
     Y = pd.series(np.array(delta))
@@ -438,7 +443,7 @@ def combined_generator(hist_data, nR, nY ) :
         shifted_hist_data.index = hist_data.index
         #print(shifted_hist_data.head())
         Qmonthly_shifted = convert_data_to_monthly(shifted_hist_data)
-        print(Qmonthly_shifted[list(Qmonthly_shifted.keys())[0]].info())
+        #print(Qmonthly_shifted[list(Qmonthly_shifted.keys())[0]].info())
         Qtotals[k] = Qmonthly_shifted #{window}{stations}{year-month}
         
         #working till here
@@ -470,9 +475,9 @@ def combined_generator(hist_data, nR, nY ) :
     for r in range(0,nR):
         dd = []
         for year, month in zip(range(0,nY), range(0,12)):
-            #z = (Q_Qg[r]).iloc(i,:)#Since month is passed, we should pass select realisation data
+            #z = (Q_Qg[r]).iloc[i,:]#Since month is passed, we should pass select realisation data
             z = Q_Qg[r]
-            [KNN_id, W] = KNN_identification(Z, Qtotals, year, month)
+            [KNN_id, W] = KNN_identification(z, Qtotals, year, month)
             Wcum = pd.series(np.array(W)).cumsum()
             #py, _ = KNN_sampling(KNN_id, Qindices{month}, Wcum, hist_data, month)
             py = KNN_sampling(KNN_id, Wcum, hist_data, month, 15)
