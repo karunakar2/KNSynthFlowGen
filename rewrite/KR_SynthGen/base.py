@@ -496,7 +496,7 @@ def combined_generator(hist_data, nR, nY ) :
             d = []
             for j in z.keys():
                 #d[j,:] = py[:,j]*Z[j].iloc[year,month]
-                d.append(np.mult(np.array(py[j]*np.array(z[j].iloc[year,month])))) #element wise multiplication alright?
+                d.append(np.multiply(np.array(py[j]*np.array(z[j].iloc[year,month])))) #element wise multiplication alright?
             #dd = [dd d] #what is this here? append?
             print(d)
     """        
