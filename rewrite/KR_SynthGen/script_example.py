@@ -15,16 +15,17 @@ nSites = len(qDaily.columns)
 #print(qDaily.info())
 
 nR = min(1000, pow(nYears,2))
-num_realizations = [nR, nYears] #lall's criterion
-num_years = [nR, 1]
+num_realizations = [nYears, nR] #lall's criterion
+num_years = [nYears, 1]
 
 for r,y in zip(num_realizations,num_years) : #this is not about array index here
     print(r,'realisations -',y,'years')
     Qd_cg = combined_generator(qDaily, r, y )
 
-    for i in range(0,r):
-        for j in Qd_cg[i].keys():
-            Qd_cg[i][j].to_csv('../validation/synthetic/'+j+'-r'+str(i)+'-daily.csv')
+    for i in Qd_cg.keys():
+        Qd_cg[i].to_csv('../validation/synthetic/'+'-r'+str(i)+'-daily.csv')
+        monDf = convert_data_to_monthly(Qd_cg[i])
+        monDf.to_csv('../validation/synthetic/'+'-r'+str(i)+'-monthly.csv')
 
     # back-transform evaporation
     ##Qd_cg[:,:,4] = log[Qd_cg[:,:,4]];

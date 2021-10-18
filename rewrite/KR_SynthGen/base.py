@@ -346,6 +346,8 @@ def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize, Y_ord):
     result = np.where(KNNmat == yearID)
     listOfCoordinates = list(zip(result[0], result[1], result[2])) #3d array
     k = listOfCoordinates[0][0] #use the first hit
+    if k >= windowSize:
+        raise Exception('The number of days shifted is more than set window size ', windowSize)
     year = listOfCoordinates[0][2]
     #see KNN_identification() for the format and size
 
@@ -353,7 +355,7 @@ def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize, Y_ord):
     # and first 7 days of first year after last 7 days of last year
     nrows = len(Qdaily)
     ##Qdaily = [Qdaily[nrows-7:nrows,:] Qdaily Qdaily[1:8,:]]
-    Qdaily = patchData(Qdaily,7)
+    Qdaily = patchData(Qdaily,k)
     
     #well this needs fixing
     """
@@ -373,9 +375,10 @@ def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize, Y_ord):
     return [py, yearID] 
     """
     
-    shifted_Qdaily = Qdaily.iloc[k:k+nrows,:].copy()
-    #shifted_Qdaily.index = Qdaily.index
-    shifted_Qdaily.index = pd.date_range(Qdaily.index.min(), periods=len(shifted_Qdaily)) #brute forcing here?
+    shifted_Qdaily = (Qdaily.iloc[k:k+nrows,:]).copy()
+    #print(2,len(Qdaily),len(shifted_Qdaily))
+    shifted_Qdaily.index = Qdaily.index
+    ##shifted_Qdaily.index = pd.date_range(Qdaily.index.min(), periods=len(shifted_Qdaily)) #brute forcing here? not suitable, it will bring leap year stuff along
     #print(shifted_Qdaily.head())
     thisYear = int(shifted_Qdaily.index.year.min()) + year
     #print(thisYear)
@@ -457,6 +460,7 @@ def combined_generator(hist_data, nR, nY ) :
     for k in range(0,15):
         Qmonthly_shifted = {}
         shifted_hist_data = (extra_hist_data.iloc[k:k+nrows,:]).copy()
+        #print(1,len(hist_data),len(shifted_hist_data))
         shifted_hist_data.reset_index(inplace=True,drop=True)
         #shifted_hist_data.reindex_like(hist_data)
         shifted_hist_data.index = hist_data.index
@@ -495,12 +499,13 @@ def combined_generator(hist_data, nR, nY ) :
     D = {}
    
     for r in range(0,nR):
-        D[r] = {}
+        D[r] = pd.DataFrame()
         #z = (Q_Qg[r]).iloc[i,:]#Since month is passed, we should pass select realisation data
         z = Q_Qg[r]
         for j in z.keys():
-            d = []
+            d = pd.DataFrame()
             for year in range(1,nY):
+                print('sampling realisation',r+1,' for year',year)
                 for month in range(1,13):
                     #print(year, month)
                     
@@ -514,11 +519,14 @@ def combined_generator(hist_data, nR, nY ) :
                     #print(z[j].shape, year, month)
                     #d[j,:] = py[:,j]*Z[j].iloc[year,month]
                     #print(py[j])
-                    temp = np.multiply(np.array(py[j]),z[j].iloc[year,month-1]) #index context here
-                    d.append(temp/ Dt)
+                    #print('z',z[j].iloc[year,month-1])
+                    temp = py[j]*z[j].iloc[year,month-1] #index context here
+                    #d.append(temp/ Dt)
+                    d = pd.concat([d, temp])
                     #print(temp)
-            D[r][j] = pd.DataFrame(d) #, columns = list(range(1,13)),index = list(range(1,nY+1)))
-            print(D[r][j].head()) #.info())
+            d.columns = j
+            D[r] = Dr[r].join(d, how=outer) # outer, jic - if indices are different
+            #print(D[r].head()) #.info())
                 #d.append(temp) #element wise multiplication alright?
             #dd = [dd d] #what is this here? append?
             #print(d)
