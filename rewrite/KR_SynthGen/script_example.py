@@ -18,12 +18,17 @@ nR = min(1000, pow(nYears,2))
 num_realizations = [nR, nYears] #lall's criterion
 num_years = [nR, 1]
 
-for k in range(0,len(num_realizations)):
-    Qd_cg = combined_generator(qDaily, num_realizations[k], num_years[k] )
-    """
-    # back-transform evaporation
-    Qd_cg[:,:,4] = log[Qd_cg[:,:,4]];
+for r,y in zip(num_realizations,num_years) : #this is not about array index here
+    print(r,'realisations -',y,'years')
+    Qd_cg = combined_generator(qDaily, r, y )
 
+    for i in range(0,r):
+        for j in Qd_cg[i].keys():
+            Qd_cg[i][j].to_csv('../validation/synthetic/'+j+'-r'+str(i)+'-daily.csv')
+
+    # back-transform evaporation
+    ##Qd_cg[:,:,4] = log[Qd_cg[:,:,4]];
+    """
     # write simulated data to file
     for i in range(1:Nsites):
         q_ = [];
