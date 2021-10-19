@@ -90,16 +90,10 @@ def chol_corr(Z):
 def monthly_main( hist_data:pd.DataFrame(), nR:int, nY:int ):
     # from daily to monthly
     Qh_mon = convert_data_to_monthly(hist_data) 
-    Nsites = len(Qh_mon)
-
     Qgen = {}
     for r in range(0,nR):
-        Qgen[r] = {}
         Qmon_gen = monthly_gen(Qh_mon, nY) #formerly Qs
         Qgen[r] = Qmon_gen
-    
-    #print(Qgen,'Qgen')
-    ##print(len(Qgen),Qgen[1].shape)
     return Qgen #{realisation}{site}{year,month} - years in rows
 
 def monthly_gen(q_historical, num_years, p=None, n=None):
@@ -124,13 +118,16 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
     Qs = {}
     for k in q_historical.keys():
         Q_matrix = q_historical[k]
-        #print(Q_matrix.shape)
-        """
         if  p != None and n != None:
-            temp = sort(Q_matrix)
-            app = temp(1:ceil(p*nQ_historical),:) # find lowest p# of values for each month
-            Q_matrix = vertcat(Q_matrix, repmat(app, n, 1))
-        """
+            #temp = sort(Q_matrix)
+            tempDf = Q_matrix.copy()
+            tempDf = temp.apply(lambda x: x.sort_values().values)
+            #app = temp(1:ceil(p*nQ_historical),:) # find lowest p# of values for each month
+            appndDf = tempDf.iloc[0:math.ceil(p*nQ_historical),:]
+            #Q_matrix = vertcat(Q_matrix, repmat(app, n, 1))
+            for i in range(0,n):
+                Q_matrix = pd.concat([Q_matrix,appndDf])
+                
         logQ = Q_matrix.apply(lambda x: np.log(x))
         monthly_mean = []
         monthly_stdev = []
