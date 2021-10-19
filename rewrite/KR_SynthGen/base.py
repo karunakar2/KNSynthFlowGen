@@ -6,6 +6,8 @@ import pandas as pd
 
 from datetime import date
 
+import shelve
+
 #Validated functions
 #Sum aggregates the daily data to monthly values
 def convert_data_to_monthly(df:pd.DataFrame()) ->{'station name':pd.DataFrame()}:
@@ -378,19 +380,15 @@ def combined_generator(hist_data, nR, nY, selectYears = [], selectMonths = [], n
         Qtotals[k] = Qmonthly_shifted #{window}{stations}{year-month}
     
     Dt = 3600*24
-    D = {}
-    """
-    parallel = False
-    #print(name)
-    if name != None :
-        if name == "__main__" or name == "__mp_main__": #former is original call, later is mp call
-            parallel = True
-            print('running parallel simulation')
-        else:
-            print('parallel execution is attempted but didnot work because the file from where this function is called, should be named "main.py"')
-    if parallel == False:
-         print('serial simulation')
-    """
+    shelved = False
+    try:
+        D = shelve.open('predCache')
+        shelved = True
+    except Exception as er:
+        print(er)
+        print('using memory to store data')
+        D = {}
+
     parallel = True
     if name == None:
         parallel = False
@@ -404,7 +402,7 @@ def combined_generator(hist_data, nR, nY, selectYears = [], selectMonths = [], n
         
         #helper function to put result in correct place for parallel
         def collect_result(results):
-            global D
+            nonlocal D
             [d, r] = results
             D[r] = d
         if name == "__main__": #this is a hack
@@ -422,6 +420,9 @@ def combined_generator(hist_data, nR, nY, selectYears = [], selectMonths = [], n
     if parallel:
         pool.close()
         pool.join()  # postpones the execution of next line of code until all processes in the queue are done.
+        
+    if shelved:
+        D.close()
     return D
     
 
