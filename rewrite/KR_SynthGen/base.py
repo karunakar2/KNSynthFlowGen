@@ -1,3 +1,5 @@
+#import sys
+
 import math
 import numpy as np
 import pandas as pd
@@ -114,8 +116,6 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
         n = n-1 # (input n=2 to double the frequency, i.e. repmat 1 additional time)
         nQ = nQ_historical + math.floor(p*nQ_historical+1)*n
     
-    #Random_Matrix = randi(nQ, num_years, 12)
-    #Random_Matrix = np.random.randint(num_years, size=(nQ,12))
     Random_Matrix = np.random.randint(nQ, size=(num_years,12))
     #print(Random_Matrix.shape,'rmsize')
     
@@ -143,10 +143,9 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
         Z = np.array(Z) #list of lists to array format
         #print(Z.shape)
         
-        #Z_vector = reshape(Z',1,[])
         Z_vector = np.ravel(Z.T)
         Z_JulyToJune = Z_vector[6:-6] #zero index so starts at 6, uptill last 6 months
-        #Z_shifted = reshape(Z_vector(7:(nQ*12-6)),12,[])' #july of start year to june of end year
+        #july of start year to june of end year
         Z_shifted = np.transpose(Z_JulyToJune.reshape(-1,12))
         #print(Z_shifted.shape,'zshiftshape')
         
@@ -159,37 +158,29 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
         Qs_uncorr = []
         for i in range(0,12): #python index related
             #print('z RM',Z.shape,Random_Matrix.shape)
-            #Qs_uncorr[:,i] = Z[Random_Matrix[:,i], i]
-            ##Qs_uncorr.append(Z[Random_Matrix[:,i],i])
             Qs_uncorr.append(Z[i,Random_Matrix[:,i]])
         Qs_uncorr = np.array(Qs_uncorr).T
-        #Qs_corr(:,:) = Qs_uncorr(:,:)*U
         #print('c',Qs_uncorr.shape)
         Qs_corr = np.dot(Qs_uncorr,U)
         
-        #Qs_uncorr_vector = reshape(Qs_uncorr(:,:)',1,[])
         Qs_uncorr_vector = np.ravel(Qs_uncorr)
-        #Qs_uncorr_shifted(:,:) = reshape(Qs_uncorr_vector(7:(num_years*12-6)),12,[])'
         Qs_uncorr_vector_JJ = Qs_uncorr_vector[6:-6]
         Qs_uncorr_shifted = Qs_uncorr_vector_JJ.reshape(-1,12)
-        #Qs_corr_shifted(:,:) = Qs_uncorr_shifted(:,:)*U_shifted
         Qs_corr_shifted = np.dot(Qs_uncorr_shifted,U_shifted)
 
         Qs_log = np.empty((len( Qs_corr_shifted ),len( Qs_corr_shifted [0])))
         #print(Qs_log)
         Qs_log[:,0:5] = Qs_corr_shifted[:,6:11] #indices adjusted
-        #Qs_log[:,6:11] = Qs_corr[1:num_years-1,6:11]
         Qs_log[:,6:11] = Qs_corr[:-1,6:11] #not sure should we exclude last or first?
         #print(Qs_log.shape)
 
         Qsk = np.empty((len( Qs_log ),len( Qs_log[0])))
         for i in range(0,12):
             Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i])
-        QskDf = pd.DataFrame(Qsk, columns = Q_matrix.columns) ##, index = Q_matrix.index)
+        QskDf = pd.DataFrame(Qsk, columns = Q_matrix.columns)
         Qs[k] = QskDf
         ##print(QskDf.info())
-    
-    #print(Qs)
+
     return Qs
 
 ###---------------------yet to finish this part -----------------------------------
@@ -241,11 +232,8 @@ def KNN_identification( Z, Qtotals, year, month, K=None ):
                 temp = temp[temp.index == thisYear][month].values[0]
                 delta.append(math.pow((temp-Z[j].iloc[year-1,month-1]),2)) #-1 is index context here
     #print(delta)
-    #Y = [[1:size(delta,1)]', delta ] 
     Y = pd.Series(np.array(delta))
-    #Y_ord = sortrows(Y, 2)
     Y_ord = Y.sort_values()
-    ###What to do here??
     KNN_id = Y_ord[0:K] #
     #print(KNN_id)
 
@@ -257,7 +245,7 @@ def KNN_identification( Z, Qtotals, year, month, K=None ):
 
     return KNN_id, W, Y_ord
     
-def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize, Y_ord):
+def KNN_sampling( KNN_id, Wcum, Y_ord, Qdaily, month, windowSize):
     # py = KNN_sampling( KKN_id, indices, Wcum, Qdaily, month )
     #
     # Selection of one KNN according to the probability distribution defined by
@@ -278,9 +266,7 @@ def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize, Y_ord):
     # MatteoG 31/05/2013
 
     #Randomly select one of the k-NN using the Lall and Sharma density estimator
-    #r = rand 
     r = np.random.rand(1,1)[0,0]
-    #Wcum = [0, Wcum]  #not sure whats happening here
     Wcum =  pd.concat([pd.Series([0]), Wcum], ignore_index=True)
     #print(Wcum)
     
@@ -309,29 +295,50 @@ def KNN_sampling( KNN_id, Wcum, Qdaily, month, windowSize, Y_ord):
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
     nrows = len(Qdaily)
-    ##Qdaily = [Qdaily[nrows-7:nrows,:] Qdaily Qdaily[1:8,:]]
     Qdaily = patchData(Qdaily,k)
       
     shifted_Qdaily = (Qdaily.iloc[k:k+nrows,:]).copy()
     #print(2,len(Qdaily),len(shifted_Qdaily))
     shifted_Qdaily.index = Qdaily.index
-    ##shifted_Qdaily.index = pd.date_range(Qdaily.index.min(), periods=len(shifted_Qdaily)) #brute forcing here? not suitable, it will bring leap year stuff along
     #print(shifted_Qdaily.head())
     thisYear = int(shifted_Qdaily.index.year.min()) + year
     #print(thisYear)
     dailyFlows = shifted_Qdaily[(shifted_Qdaily.index.year == thisYear) & (shifted_Qdaily.index.month == month)].copy()
     
     for thisColumn in dailyFlows.columns:
-        #py[:,thisColumn] = dailyFlows[thisColumn]/sum(dailyFlows[thisColumn])
         dailyFlows[thisColumn] = dailyFlows[thisColumn]/dailyFlows[thisColumn].sum()
     
     #print(dailyFlows.head()) #dataframe of daily flow for corresponding year and month for all stations
     return dailyFlows #df for all stations
 
+def KNNdailyGen(realisation, z, Qtotals, yrRange, monRange, hist_data, totalShiftDays):
+    d = pd.DataFrame()
+    for year in yrRange:
+        print('sampling realisation',realisation+1,' for year',year+1, flush = True)
+        #sys.stdout.flush()
+        for month in monRange:
+            [KNN_id, W, Y_ord] = KNN_identification(z, Qtotals, year, month)
+            Wcum = pd.Series(np.array(W)).cumsum()
+            py = KNN_sampling(KNN_id, Wcum, Y_ord, hist_data, month, totalShiftDays)
+            temp = py.apply(lambda x: x*z[x.name].iloc[year,month-1]) #/Dt) 
+            # division with Dt is reducing the values by several orders
+            d = pd.concat([d, temp])
+    return [d, realisation]
 
 ##---------------------------------------------------------------------------------
 #DaysPerMonth = [31,28,31,30,31,30,31,31,30,31,30,31]
-def combined_generator(hist_data, nR, nY ) :
+def combined_generator(hist_data, nR, nY, selectYears = [], selectMonths = [], name = None) :
+    
+    #custom date generation or full schedule
+    if len(selectYears) == 0:
+        yrRange = range(0,nY)
+    else :
+        yrRange = selectYears
+        
+    if len(selectMonths) == 0:
+        monRange = range(1,13)
+    else :
+        monRange = selectMonths
     
     # generation of monthly data via Kirsch et al. (2013):
     # Kirsch, B. R., G. W. Characklis, and H. B. Zeff (2013), 
@@ -353,49 +360,68 @@ def combined_generator(hist_data, nR, nY ) :
     # the selected neighbor to match the synthetic monthly total. To
     # disaggregate Jan Flows, consider all historical January totals +/- 7
     # days, etc.
-    ###Dt = 3600*24
-    ###DaysPerMonth = [31 28 31 30 31 30 31 31 30 31 30 31]
-    ###D = np.empty((nR,365*nY,Nsites))
 
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
-    
-    #extra_hist_data = [hist_data[nrows-7:nrows,:] hist_data hist_data(1:8,:)]
-    extra_hist_data = patchData(hist_data,7)
+    patchNDays = 7
+    extra_hist_data = patchData(hist_data,patchNDays)
     
     nrows = len(hist_data)
     Qtotals = {}
-    for k in range(0,15):
+    totalShiftDays = patchNDays - (-1*patchNDays)
+    for k in range(0,totalShiftDays):
         Qmonthly_shifted = {}
         shifted_hist_data = (extra_hist_data.iloc[k:k+nrows,:]).copy()
-        #print(1,len(hist_data),len(shifted_hist_data))
         shifted_hist_data.reset_index(inplace=True,drop=True)
-        #shifted_hist_data.reindex_like(hist_data)
         shifted_hist_data.index = hist_data.index
-        #print(shifted_hist_data.head())
         Qmonthly_shifted = convert_data_to_monthly(shifted_hist_data)
-        ##print(Qmonthly_shifted[list(Qmonthly_shifted.keys())[0]].info())
         Qtotals[k] = Qmonthly_shifted #{window}{stations}{year-month}
     
     Dt = 3600*24
     D = {}
-   
-    for r in range(0,nR):
-        D[r] = pd.DataFrame()
-        z = Q_Qg[r]
-        d = pd.DataFrame()
-        for year in range(1,nY+1):
-            print('sampling realisation',r+1,' for year',year)
-            for month in range(1,13):
-                [KNN_id, W, Y_ord] = KNN_identification(z, Qtotals, year, month)
-                Wcum = pd.Series(np.array(W)).cumsum()
-                py = KNN_sampling(KNN_id, Wcum, hist_data, month, 15, Y_ord)
-                temp = py.apply(lambda x: x*z[x.name].iloc[year,month-1]/Dt)
-                #print(temp.head())
-                d = pd.concat([d, temp])
-        D[r] = d
-        #print(D[r].head()) #.info())
+    """
+    parallel = False
+    #print(name)
+    if name != None :
+        if name == "__main__" or name == "__mp_main__": #former is original call, later is mp call
+            parallel = True
+            print('running parallel simulation')
+        else:
+            print('parallel execution is attempted but didnot work because the file from where this function is called, should be named "main.py"')
+    if parallel == False:
+         print('serial simulation')
+    """
+    parallel = True
+    if name == None:
+        parallel = False
+        print('serial simulatiom')
+        
+    #parallel option
+    if parallel:
+        import multiprocessing as mp
+        pool = mp.Pool(mp.cpu_count()-1) 
+        #leave 1 core for the computer to respond
+        
+        #helper function to put result in correct place for parallel
+        def collect_result(results):
+            global D
+            [d, r] = results
+            D[r] = d
+        if name == "__main__": #this is a hack
+            #https://stackoverflow.com/questions/37737085/is-it-possible-to-use-multiprocessing-in-a-module-with-windows
+            #https://stackoverflow.com/a/63632161
+            for r in range(0,nR):
+                z = Q_Qg[r]
+                pool.apply_async(KNNdailyGen, args=(r, z, Qtotals, yrRange, monRange, hist_data, totalShiftDays), callback=collect_result)
+    else:
+        for r in range(0,nR):
+            z = Q_Qg[r]
+            [D[r], _] = KNNdailyGen(r, z, Qtotals, yrRange, monRange, hist_data, totalShiftDays)
+            #print(D[r].head()) #.info())
     
+    if parallel:
+        pool.close()
+        pool.join()  # postpones the execution of next line of code until all processes in the queue are done.
     return D
     
 
