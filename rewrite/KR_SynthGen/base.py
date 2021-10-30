@@ -106,12 +106,15 @@ def chol_corr(Z: np.ndarray) -> np.ndarray:
     return U
 
 def monthly_main( hist_data:pd.DataFrame(), numRealisations:int, numYears:int ) -> {'realisation':pd.DataFrame()} :
+    print('Monthly stream flow generation in progress ...')
     # from daily to monthly
     Qh_mon = convert_data_to_monthly(hist_data) 
     Qgen = {}
     for r in range(0,numRealisations):
         Qmon_gen = monthly_gen(Qh_mon, numYears) #formerly Qs
         Qgen[r] = Qmon_gen #raveled in original version
+    
+    print('done')
     return Qgen #{realisation}{site}{year,month} - years in rows
 
 
@@ -164,13 +167,13 @@ def monthly_gen(q_historical:pd.DataFrame(), num_years:int, droughtProbab:float=
             monthly_mean.append(m_mean)
             monthly_stdev.append(m_stdev)
         Z = np.array(Z).T #list of lists to array format
-        #print(Z.shape)
         
-        Z_vector = np.ravel(Z.T)
-        Z_JJ = Z_vector[6:(nQ*12-6)]
+        Z_vector = np.ravel(Z) #dont transpose here please
+        #for across year correlation
+        Z_JJ = Z_vector[6:(nQ*12-6)] #:-6 is ideal but drought years are appended, so
         #july of start year to june of end year
-        Z_shifted = Z_JJ.reshape(12,-1).T
-        print(Z.shape, Z_shifted.shape)
+        Z_shifted = Z_JJ.reshape(-1,12) #no transpose and check the order too
+        #https://bic-berkeley.github.io/psych-214-fall-2016/index_reshape.html
         
         # The correlation matrices should use the historical Z's
         # (the "appendedd years" do not preserve correlation)
@@ -186,15 +189,16 @@ def monthly_gen(q_historical:pd.DataFrame(), num_years:int, droughtProbab:float=
         
         Qs_uncorr_vector = np.ravel(Qs_uncorr.T)
         Qs_uncorr_vector_JJ = Qs_uncorr_vector[6:(num_years*12-6)] #index should be correct
-        Qs_uncorr_shifted = Qs_uncorr_vector_JJ.reshape(12,-1).T #check these shapes, i am not sure
+        Qs_uncorr_shifted = Qs_uncorr_vector_JJ.reshape(-1,12) #no transpose here too
         
         Qs_corr = np.dot(Qs_uncorr,U)
         Qs_corr_shifted = np.dot(Qs_uncorr_shifted,U_shifted)
         
-        #print(Qs_corr.shape,Qs_corr_shifted.shape)
         Qs_log = np.empty((len( Qs_corr_shifted ),len( Qs_corr_shifted [0])))
+        #shifted starts from july, so, pick from 6 month offset to get jan
         Qs_log[:,0:5] = Qs_corr_shifted[:,6:11] #indices adjusted
-        Qs_log[:,6:11] = Qs_corr[1:num_years,6:11] #num_years-1 was considered but yields a 1 year less vector
+        #no need of adjustment here
+        Qs_log[:,6:11] = Qs_corr[1:num_years,6:11] 
         
         Qsk = np.empty((len( Qs_log ),len( Qs_log[0])))
         for i in range(0,12):
