@@ -281,7 +281,7 @@ def KNN_identification( Z:{'station name':pd.DataFrame()}, Qtotals:{'offsets':pd
     
     return KNN_id, W, delta
     
-def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals:{'offsets':pd.DataFrame()}, Qdaily:pd.DataFrame(), month:int):
+def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals:{'offsets':pd.DataFrame()}, Qdaily:pd.DataFrame(), offsetDaily:pd.DataFrame(), month:int):
     # py = KNN_sampling( KKN_id, indices, Wcum, Qdaily, month )
     #
     # Selection of one KNN according to the probability distribution defined by
@@ -321,28 +321,18 @@ def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals
     wShifts = list(Qtotals.keys()) #offsets
     nSites = list(Qtotals[wShifts[0]].keys()) #stations
     yList = Qtotals[wShifts[0]][nSites[0]].index.values
-    #reset to +/- days rather than an index
-    wShifts = [int(x-(wShifts[-1])/2) for x in wShifts]
-    
-    #magic to find the year and k
-    """
-    result = np.where(KNNmat == yearID) #KNNmat is delta, now 2d array`
-    listOfCoordinates = (list(zip(result[0], result[1], result[2])))[0] #use the first hit
-    thisOffset = wShifts[listOfCoordinates[0]]
-    #the list starts from 
-    thisYear = yList[listOfCoordinates[2]] #do
-    #see KNN_identification() for the format and size
-    """
+    #magic to find the year and offset
     result = np.where(delta == yearID)
     listOfCoordinates = (list(zip(result[0], result[1])))[0]
-    thisOffset = abs(wShifts[listOfCoordinates[0]])
+    thisOffset = wShifts[listOfCoordinates[0]] #shift key to access
     thisYear = yList[listOfCoordinates[1]] #result is 2d tuple now
     #print(thisOffset,thisYear)
         
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
     nrows = len(Qdaily)
-    shifted_Qdaily = ((patchData(Qdaily,thisOffset)).iloc[thisOffset:thisOffset+nrows,:]).copy() #this offset starts with neg patching (indx 0) till pos patching (len + 2xpatch len)
+    shifted_Qdaily = (offsetDaily.iloc[thisOffset:thisOffset+nrows,:]).copy() 
+    #this offset starts with neg patching as index 0, till pos patching (len + 2X patch)
     shifted_Qdaily.index = Qdaily.index
     #print(shifted_Qdaily.head())
     dailyFlows = shifted_Qdaily[(shifted_Qdaily.index.year == thisYear) & (shifted_Qdaily.index.month == month)].copy()
@@ -356,13 +346,19 @@ def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals
 def KNNdailyGen(realisation:int, z:{'station':pd.DataFrame()}, Qtotals:{'offsets':pd.DataFrame()}, yrRange:list, monRange:list, hist_data:pd.DataFrame()):
     d = pd.DataFrame()
     startYear = hist_data.index.year.min()
+    
+    #dailyData offset now, than doing it again and again in loop
+    wShifts = list(Qtotals.keys()) #offsets
+    patchNDays = int((wShifts[-1])/2) #int casted to remove any oddities
+    offsetDaily = patchData(hist_data,patchNDays)
+    
     for year in yrRange:
         print('sampling realisation',realisation+1,' for year',year+1, flush = True)
         #sys.stdout.flush()
         for month in monRange:
             [KNN_id, W, delta] = KNN_identification(z, Qtotals, year, month)
             Wcum = pd.Series(np.array(W)).cumsum()
-            py = KNN_sampling(KNN_id, Wcum, delta, Qtotals, hist_data, month)
+            py = KNN_sampling(KNN_id, Wcum, delta, Qtotals, hist_data, offsetDaily, month)
             #replace the original years in index with predicted year
             py.reset_index(inplace=True)
             #print(py.head())
@@ -443,7 +439,7 @@ def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYea
     parallel = True
     if name == None:
         parallel = False
-        print('serial simulatiom')
+        print('serial simulation')
         
     #parallel option
     if parallel:
