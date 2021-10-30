@@ -1,4 +1,5 @@
 #import sys
+import warnings
 
 import math
 import numpy as np
@@ -8,11 +9,17 @@ from datetime import date
 
 import shelve
 
+import logging
+logging.basicConfig(filename='./test.log', level=logging.DEBUG, format='%(asctime)s | %(levelname)s | %(funcName)s |%(message)s')
+
+
 #Validated functions
 #Sum aggregates the daily data to monthly values
-def convert_data_to_monthly(df:pd.DataFrame()) ->{'station name':pd.DataFrame()}:
-    mDf = df.groupby([lambda x: x.year, lambda x: x.month]).sum()
-    #print(mDf.head())
+def convert_data_to_monthly(df:pd.DataFrame(), debug=False) ->{'station name':pd.DataFrame()}:
+    mDf = df.groupby([lambda x: x.year, lambda x: x.month]).sum() * 86400 
+    #convert flow/s to flow/day * monthsum
+    if debug:
+        logging.info('mDf',mDf.head())
     """
     mDf = df.groupby([lambda x: x.year, lambda x: x.month]).sum()
     mDf['Date'] = mDf.index.map(lambda x: date(x[0], x[1], 1))
@@ -21,24 +28,29 @@ def convert_data_to_monthly(df:pd.DataFrame()) ->{'station name':pd.DataFrame()}
     mDf.index = pd.to_datetime(mDf.index)
     """
 
-    yearList = list(mDf.index.get_level_values(0))
+    yearList = list(mDf.index.get_level_values(0).unique())
+    if debug:
+        logging.info('yearList',yearList)
     monthList = list(range(1,13))
     qMonthly = {}
     #inititalisation in pandas, defeats the purpose of being dynamic
     for thisSite in mDf.columns:
-        qMonthly[thisSite] = pd.DataFrame() #columns=monthList) #, index=yearList)
+        qMonthly[thisSite] = pd.DataFrame()
         #populate the dataframes
-        for thisYear in range(min(yearList), max(yearList)):
+        for thisYear in yearList: #range(min(yearList), max(yearList)+1):
             redDf = mDf.loc[thisYear,thisSite]
-            data = {(key+1):value for key,value in enumerate(redDf.values)}
+            data = {(key+1):value for key,value in enumerate(redDf.values)} 
+            #key start at 0, align it to 1 i.e jan
             tempDf = pd.DataFrame(data= data, columns=monthList, index=[thisYear])
-            #print(tempDf.head())
+            if debug:
+                logging.info('tempDf',tempDf.head())
             qMonthly[thisSite] = qMonthly[thisSite].append(tempDf)
-        #print(qMonthly[thisSite].head())
+        if debug:
+            logging.info('qMonthly',thisSite,qMonthly[thisSite].head())
     return qMonthly
 
 #patches the data in front and end (N+D+N days) to sift through adjustments
-def patchData(hist_data:pd.DataFrame(), period:int, debug:bool=0):
+def patchData(hist_data:pd.DataFrame(), period:int, debug:bool=0) -> pd.DataFrame():
     preDf = hist_data.tail(period).copy().reset_index(drop=True)
     preDf['Date'] = pd.date_range(hist_data.index.min(), freq='-1D', periods=period)
     preDf.set_index('Date',inplace=True)
@@ -54,63 +66,74 @@ def patchData(hist_data:pd.DataFrame(), period:int, debug:bool=0):
     
     return extra_hist_data
 
-##-------------------------------------------------------------------------------
-##Unverified functions
+#system constant
 eps = np.finfo(float).eps
-def chol_corr(Z):
+def chol_corr(Z: np.ndarray) -> np.ndarray:
 # compute cholesky decomp of correlation matrix of columns of Z
 # attempts to repair non-positive-definite matrices
 # http://www.mathworks.com/matlabcentral/answers/6057-repair-non-positive-definite-correlation-matrix
 # rank-1 update followed by rescaling to get unit diagonal entries
-    U = None
     R = np.corrcoef(Z)
-    try :
-        U = np.linalg.cholesky(R)
-    #will raise LinAlgError if the matrix is not positive definite.
-    #https://stackoverflow.com/a/16266736
-    except Exception as er:
-        if er == 'LinAlgError':
+    posDef = True
+    i = 0
+    while posDef:
+        i += 1
+        if i > 1000:
+            raise Exception('Reached 1000 iterations, will not continue. Please check time series data')
+        
+        #will raise LinAlgError if the matrix is not positive definite.
+        #https://stackoverflow.com/a/16266736
+        try :
+            U = np.linalg.cholesky(R)
             posDef = False
-            while posDef:
-                try :
-                    k = min([min(np.real(np.linalg.eig(R))) -1*eps])
-                    R = R - k*np.eye(R.size)
-                    R = R/R[0,0] #adjusted for indices
-                    U = np.linalg.cholesky(R)
-                    posDef = False
-                except Exception as err:
-                    if err == 'LinAlgError':
-                        posDef = True
-                    else:
-                        print(err)
-            else:
-                print(er)
+        except np.linalg.LinAlgError:
+            w,v = np.linalg.eig(R)
+            temp = np.amin(v.real)
+            k = min(temp,-1*eps)
+            R = R - k*np.eye(R.shape[0]) #eye needs 1 dimension only
+            R = R/R[0,0] #adjusted for indices
+            
+            #these doesn'
+            #old = R
+            #R = get_near_psd(R)
+            #R = fix_nonpositive_semidefinite(R)
+            #if R.all() == old.all():
+            #    print('same')
+            posDef = True
+        except Exception as err:
+            print(err)
+            raise Exception('Unable to handle this error')
     return U
 
-def monthly_main( hist_data:pd.DataFrame(), nR:int, nY:int ):
+def monthly_main( hist_data:pd.DataFrame(), numRealisations:int, numYears:int ) -> {'realisation':pd.DataFrame()} :
     # from daily to monthly
     Qh_mon = convert_data_to_monthly(hist_data) 
     Qgen = {}
-    for r in range(0,nR):
-        Qmon_gen = monthly_gen(Qh_mon, nY) #formerly Qs
-        Qgen[r] = Qmon_gen
+    for r in range(0,numRealisations):
+        Qmon_gen = monthly_gen(Qh_mon, numYears) #formerly Qs
+        Qgen[r] = Qmon_gen #raveled in original version
     return Qgen #{realisation}{site}{year,month} - years in rows
 
-def monthly_gen(q_historical, num_years, p=None, n=None):
+
+##-------------------------------------------------------------------------------
+##Unverified functions
+def monthly_gen(q_historical:pd.DataFrame(), num_years:int, droughtProbab:float=None, nDroughtYears:int=None)-> {'station name':pd.DataFrame()}:
     """
     q_historical is monthly
     """
     qH_stns = list(q_historical.keys()) #keys are station names
-    nPoints = len(qH_stns) #no of donor stations
+    #nPoints = len(qH_stns) #no of donor stations
     nQ_historical = len(q_historical[qH_stns[0]]) #no of years(with months) of data
     #future - check all dfs are of same size in qhistorical
     
-    num_years = num_years+1 # this adjusts for the new corr technique
-    if p == None and n == None:
+    num_years = num_years+1 
+    # this adjusts for the new corr technique
+    
+    if droughtProbab == None and nDroughtYears == None:
         nQ = nQ_historical
     else:
-        n = n-1 # (input n=2 to double the frequency, i.e. repmat 1 additional time)
-        nQ = nQ_historical + math.floor(p*nQ_historical+1)*n
+        nDroughtYears = nDroughtYears-1 # (input nDroughtYears=2 to double the frequency, i.e. repmat 1 additional time)
+        nQ = nQ_historical + math.floor(droughtProbab*nQ_historical+1)*nDroughtYears
     
     Random_Matrix = np.random.randint(nQ, size=(num_years,12))
     #print(Random_Matrix.shape,'rmsize')
@@ -118,17 +141,18 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
     Qs = {}
     for k in q_historical.keys():
         Q_matrix = q_historical[k]
-        if  p != None and n != None:
-            #temp = sort(Q_matrix)
+        if  droughtProbab != None and nDroughtYears != None:
             tempDf = Q_matrix.copy()
             tempDf = temp.apply(lambda x: x.sort_values().values)
-            #app = temp(1:ceil(p*nQ_historical),:) # find lowest p# of values for each month
-            appndDf = tempDf.iloc[0:math.ceil(p*nQ_historical),:]
-            #Q_matrix = vertcat(Q_matrix, repmat(app, n, 1))
-            for i in range(0,n):
+            # find lowest droughtProbab# of values for each month for drought scenario
+            appndDf = tempDf.iloc[0:math.ceil(droughtProbab*nQ_historical),:]
+            for i in range(0,nDroughtYears):
                 Q_matrix = pd.concat([Q_matrix,appndDf])
                 
         logQ = Q_matrix.apply(lambda x: np.log(x))
+        #make sure the columns aka months are in sequential order
+        logQ = logQ.reindex(sorted(logQ.columns), axis=1)
+        
         monthly_mean = []
         monthly_stdev = []
         Z = []
@@ -139,40 +163,39 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
             Z.append((m_series - m_mean) / m_stdev) #zscore here and double dim due to logQ[i] series
             monthly_mean.append(m_mean)
             monthly_stdev.append(m_stdev)
-        Z = np.array(Z) #list of lists to array format
+        Z = np.array(Z).T #list of lists to array format
         #print(Z.shape)
         
         Z_vector = np.ravel(Z.T)
-        Z_JulyToJune = Z_vector[6:-6] #zero index so starts at 6, uptill last 6 months
+        Z_JJ = Z_vector[6:(nQ*12-6)]
         #july of start year to june of end year
-        Z_shifted = np.transpose(Z_JulyToJune.reshape(-1,12))
-        #print(Z_shifted.shape,'zshiftshape')
+        Z_shifted = Z_JJ.reshape(12,-1).T
+        print(Z.shape, Z_shifted.shape)
         
         # The correlation matrices should use the historical Z's
         # (the "appendedd years" do not preserve correlation)
-        U = chol_corr(Z[:nQ_historical-1,:]) #index adjusted for python
-        U_shifted = chol_corr(Z_shifted[:nQ_historical-2,:])
-        #print('b',U.shape)
+        U = chol_corr(Z[:nQ_historical-1,:].T)
+        U_shifted = chol_corr(Z_shifted[:nQ_historical-2,:].T)
         
         Qs_uncorr = []
         for i in range(0,12): #python index related
             #print('z RM',Z.shape,Random_Matrix.shape)
-            Qs_uncorr.append(Z[i,Random_Matrix[:,i]])
-        Qs_uncorr = np.array(Qs_uncorr).T
-        #print('c',Qs_uncorr.shape)
-        Qs_corr = np.dot(Qs_uncorr,U)
+            #Qs_uncorr.append(Z[i,Random_Matrix[:,i]])#Z shape changed
+            Qs_uncorr.append(Z[Random_Matrix[:,i], i])
+        Qs_uncorr = np.array(Qs_uncorr).T #append works in a different way, so .T
         
-        Qs_uncorr_vector = np.ravel(Qs_uncorr)
-        Qs_uncorr_vector_JJ = Qs_uncorr_vector[6:-6]
-        Qs_uncorr_shifted = Qs_uncorr_vector_JJ.reshape(-1,12)
+        Qs_uncorr_vector = np.ravel(Qs_uncorr.T)
+        Qs_uncorr_vector_JJ = Qs_uncorr_vector[6:(num_years*12-6)] #index should be correct
+        Qs_uncorr_shifted = Qs_uncorr_vector_JJ.reshape(12,-1).T #check these shapes, i am not sure
+        
+        Qs_corr = np.dot(Qs_uncorr,U)
         Qs_corr_shifted = np.dot(Qs_uncorr_shifted,U_shifted)
-
+        
+        #print(Qs_corr.shape,Qs_corr_shifted.shape)
         Qs_log = np.empty((len( Qs_corr_shifted ),len( Qs_corr_shifted [0])))
-        #print(Qs_log)
         Qs_log[:,0:5] = Qs_corr_shifted[:,6:11] #indices adjusted
-        Qs_log[:,6:11] = Qs_corr[:-1,6:11] #not sure should we exclude last or first?
-        #print(Qs_log.shape)
-
+        Qs_log[:,6:11] = Qs_corr[1:num_years,6:11] #num_years-1 was considered but yields a 1 year less vector
+        
         Qsk = np.empty((len( Qs_log ),len( Qs_log[0])))
         for i in range(0,12):
             Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i])
@@ -182,14 +205,7 @@ def monthly_gen(q_historical, num_years, p=None, n=None):
 
     return Qs
 
-###---------------------yet to finish this part -----------------------------------
-
-def KNN_identification( Z, Qtotals, year, month, K=None ):
-    #year and month are being used in index context here
-    #quick shortcut, as they both are numeric
-    ##year -= 1
-    ##month -= 1
-    
+def KNN_identification( Z:{'station name':pd.DataFrame()}, Qtotals:{'offsets':pd.DataFrame()}, year:int, month:int, K:int=None ):
     # [KNN_id, W] = KNN_identification( Z, Qtotals, month, k )
     #
     # Identification of K-nearest neighbors of Z in the historical annual data
@@ -209,30 +225,47 @@ def KNN_identification( Z, Qtotals, year, month, K=None ):
     # MatteoG 31/05/2013
 
     ##Ntotals is calc in two steps here
-    wShifts = list(Qtotals.keys())
-    nSites = list(Qtotals[wShifts[0]].keys())
-    Ntotals = len(wShifts)*len(Qtotals[wShifts[0]][nSites[0]]) #this is a short circuit
+    wShifts = list(Qtotals.keys()) #offsets
+    nSites = list(Qtotals[wShifts[0]].keys()) #stations
+    Ntotals = len(wShifts)*len(Qtotals[wShifts[0]][nSites[0]]) #offsets X years
+    #this is a short circuit and assumes all are same: valid since internally generated
     
     # Ntotals is the number of historical monthly patterns used for disaggregation.
     # A pattern is a sequence of ndays of daily flows, where ndays is the
     # number of days in the month being disaggregated. Patterns are all
     # historical sequences of length ndays beginning within 7 days before or
     # after the 1st day of the month being disaggregated.
-    if K == None:
-        K = math.floor(math.sqrt(Ntotals))
 
     # nearest neighbors identification
     # only look at neighbors from the same month +/- 7 days
+    
+    """
     delta = []
+    #the sequence doesn't matter, in comparison to original, as they are reordered
     for i in Qtotals.keys(): #shift windows
-        for j in Qtotals[i].keys(): #stations
-            for thisYear in list((Qtotals[i][j]).index):
-                temp = Qtotals[i][j]
-                temp = temp[temp.index == thisYear][month].values[0]
-                delta.append(math.pow((temp-Z[j].iloc[year-1,month-1]),2)) #-1 is index context here
+        for thisStn in Qtotals[i].keys(): #stations
+            for thisYear in list((Qtotals[i][thisStn]).index):
+                redDf = Qtotals[i][thisStn]
+                temp = redDf[redDf.index == thisYear][month].values[0]
+                #delta.append(math.pow((temp-Z[thisStn].iloc[year-1,month-1]),2)) #-1 is index context here, month and year loc are assumed
+                delta.append(math.pow((temp-Z[thisStn][month][year]),2))
     #print(delta)
-    Y = pd.Series(np.array(delta))
+    """
+    delta = np.zeros((len(wShifts),len(Qtotals[wShifts[0]][nSites[0]]))) #offsets X years
+    for thisOffset in Qtotals.keys(): #shift windows
+        for thisStn in Qtotals[thisOffset].keys(): #stations
+            yrIndex = 0
+            for thisYear in list((Qtotals[thisOffset][thisStn]).index):
+                redDf = Qtotals[thisOffset][thisStn]
+                temp = redDf[redDf.index == thisYear][month].values[0]
+                delta[thisOffset,yrIndex] += math.pow((temp-Z[thisStn][month][year]),2)
+                yrIndex += 1 #array needs index not a year, not an issue with offset as it is 0~15
+    
+    Y = pd.Series(np.ravel(np.array(delta)))
     Y_ord = Y.sort_values()
+    #K defines the subset representing the sample
+    if K == None:
+        K = math.floor(math.sqrt(Ntotals))
     KNN_id = Y_ord[0:K] #
     #print(KNN_id)
 
@@ -241,10 +274,10 @@ def KNN_identification( Z, Qtotals, year, month, K=None ):
     f1 = 1/f
     #print(f1)
     W = f1 / sum(f1) 
-
-    return KNN_id, W, Y_ord
     
-def KNN_sampling( KNN_id, Wcum, Y_ord, Qdaily, month, windowSize):
+    return KNN_id, W, delta
+    
+def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals:{'offsets':pd.DataFrame()}, Qdaily:pd.DataFrame(), month:int):
     # py = KNN_sampling( KKN_id, indices, Wcum, Qdaily, month )
     #
     # Selection of one KNN according to the probability distribution defined by
@@ -263,7 +296,7 @@ def KNN_sampling( KNN_id, Wcum, Y_ord, Qdaily, month, windowSize):
     #           yearID = randomly selected monthly total (row to select from indices)
     #
     # MatteoG 31/05/2013
-
+    
     #Randomly select one of the k-NN using the Lall and Sharma density estimator
     r = np.random.rand(1,1)[0,0]
     Wcum =  pd.concat([pd.Series([0]), Wcum], ignore_index=True)
@@ -273,7 +306,6 @@ def KNN_sampling( KNN_id, Wcum, Y_ord, Qdaily, month, windowSize):
     for thisWt,nexWt in zip(Wcum[:-1],Wcum[1:]): 
         #print(r,thisWt,nexWt)
         if (r > thisWt) and (r <= nexWt):
-            #KNNs.append(i) #is this really supposed to be more than 1? or a single value
             #one at a time from octave run
             KNNs = Wcum[Wcum == thisWt].index[0] ##something is wrong here
     #print(KNNs)
@@ -281,27 +313,34 @@ def KNN_sampling( KNN_id, Wcum, Y_ord, Qdaily, month, windowSize):
     yearID = thisKNN_id[KNNs]
     #print('yid',yearID)
     
+    #extract info from Qtotals
+    wShifts = list(Qtotals.keys()) #offsets
+    nSites = list(Qtotals[wShifts[0]].keys()) #stations
+    yList = Qtotals[wShifts[0]][nSites[0]].index.values
+    #reset to +/- days rather than an index
+    wShifts = [int(x-(wShifts[-1])/2) for x in wShifts]
+    
     #magic to find the year and k
-    KNNmat = np.array(Y_ord).reshape(windowSize,len(Qdaily.columns),-1)
-    result = np.where(KNNmat == yearID)
-    listOfCoordinates = list(zip(result[0], result[1], result[2])) #3d array
-    k = listOfCoordinates[0][0] #use the first hit
-    if k >= windowSize:
-        raise Exception('The number of days shifted is more than set window size ', windowSize)
-    year = listOfCoordinates[0][2]
+    """
+    result = np.where(KNNmat == yearID) #KNNmat is delta, now 2d array`
+    listOfCoordinates = (list(zip(result[0], result[1], result[2])))[0] #use the first hit
+    thisOffset = wShifts[listOfCoordinates[0]]
+    #the list starts from 
+    thisYear = yList[listOfCoordinates[2]] #do
     #see KNN_identification() for the format and size
-
+    """
+    result = np.where(delta == yearID)
+    listOfCoordinates = (list(zip(result[0], result[1])))[0]
+    thisOffset = abs(wShifts[listOfCoordinates[0]])
+    thisYear = yList[listOfCoordinates[1]] #result is 2d tuple now
+    #print(thisOffset,thisYear)
+        
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
     nrows = len(Qdaily)
-    Qdaily = patchData(Qdaily,k)
-      
-    shifted_Qdaily = (Qdaily.iloc[k:k+nrows,:]).copy()
-    #print(2,len(Qdaily),len(shifted_Qdaily))
+    shifted_Qdaily = ((patchData(Qdaily,thisOffset)).iloc[thisOffset:thisOffset+nrows,:]).copy() #this offset starts with neg patching (indx 0) till pos patching (len + 2xpatch len)
     shifted_Qdaily.index = Qdaily.index
     #print(shifted_Qdaily.head())
-    thisYear = int(shifted_Qdaily.index.year.min()) + year
-    #print(thisYear)
     dailyFlows = shifted_Qdaily[(shifted_Qdaily.index.year == thisYear) & (shifted_Qdaily.index.month == month)].copy()
     
     for thisColumn in dailyFlows.columns:
@@ -310,34 +349,46 @@ def KNN_sampling( KNN_id, Wcum, Y_ord, Qdaily, month, windowSize):
     #print(dailyFlows.head()) #dataframe of daily flow for corresponding year and month for all stations
     return dailyFlows #df for all stations
 
-def KNNdailyGen(realisation, z, Qtotals, yrRange, monRange, hist_data, totalShiftDays):
+def KNNdailyGen(realisation:int, z:{'station':pd.DataFrame()}, Qtotals:{'offsets':pd.DataFrame()}, yrRange:list, monRange:list, hist_data:pd.DataFrame()):
     d = pd.DataFrame()
+    startYear = hist_data.index.year.min()
     for year in yrRange:
         print('sampling realisation',realisation+1,' for year',year+1, flush = True)
         #sys.stdout.flush()
         for month in monRange:
-            [KNN_id, W, Y_ord] = KNN_identification(z, Qtotals, year, month)
+            [KNN_id, W, delta] = KNN_identification(z, Qtotals, year, month)
             Wcum = pd.Series(np.array(W)).cumsum()
-            py = KNN_sampling(KNN_id, Wcum, Y_ord, hist_data, month, totalShiftDays)
-            temp = py.apply(lambda x: x*z[x.name].iloc[year,month-1]) #/Dt) 
-            # division with Dt is reducing the values by several orders
+            py = KNN_sampling(KNN_id, Wcum, delta, Qtotals, hist_data, month)
+            #replace the original years in index with predicted year
+            py.reset_index(inplace=True)
+            #print(py.head())
+            py['Date'] = py['Date'].apply(lambda x: x.replace(year = startYear+year))
+            py.set_index('Date', inplace=True)
+            #temp = py.apply(lambda x: x*(z[x.name].iloc[year,month-1])/(3600*24))
+            temp = py.apply(lambda x: x*(z[x.name][month][year])/(3600*24))
+            #aka 86400 s/day
+            #print('temp',temp.head())
             d = pd.concat([d, temp])
     return [d, realisation]
 
 ##---------------------------------------------------------------------------------
-#DaysPerMonth = [31,28,31,30,31,30,31,31,30,31,30,31]
-def combined_generator(hist_data, nR, nY, selectYears = [], selectMonths = [], name = None) :
+def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYears:list = [], selectMonths:list = [], name:'__main__' = None) -> {'realisation':{'station':pd.DataFrame()}} :
     
     #custom date generation or full schedule
-    if len(selectYears) == 0:
+    if len(selectOffsetYears) == 0:
         yrRange = range(0,nY)
     else :
-        yrRange = selectYears
-        
+        yrRange = selectOffsetYears
+    
     if len(selectMonths) == 0:
         monRange = range(1,13)
     else :
-        monRange = selectMonths
+        if all(i > 12 for i in selectMonths):
+            raise Exception('Month list should not have values between 0,12')
+        else: #for the sake of reader
+            monRange = selectMonths
+        
+    hist_data.sort_values(by='Date', inplace=True)
     
     # generation of monthly data via Kirsch et al. (2013):
     # Kirsch, B. R., G. W. Characklis, and H. B. Zeff (2013), 
@@ -367,7 +418,7 @@ def combined_generator(hist_data, nR, nY, selectYears = [], selectMonths = [], n
     
     nrows = len(hist_data)
     Qtotals = {}
-    totalShiftDays = patchNDays - (-1*patchNDays)
+    totalShiftDays = patchNDays - (-1*patchNDays) +1 #last value is ignored, so
     for k in range(0,totalShiftDays):
         Qmonthly_shifted = {}
         shifted_hist_data = (extra_hist_data.iloc[k:k+nrows,:]).copy()
@@ -376,14 +427,13 @@ def combined_generator(hist_data, nR, nY, selectYears = [], selectMonths = [], n
         Qmonthly_shifted = convert_data_to_monthly(shifted_hist_data)
         Qtotals[k] = Qmonthly_shifted #{window}{stations}{year-month}
     
-    Dt = 3600*24
     shelved = False
     try:
-        D = shelve.open('predCache')
+        D = shelve.open('predCache', flag='n') #,'c' #alt flag
         shelved = True
     except Exception as er:
         print(er)
-        print('using memory to store data')
+        print('using RAM to store data')
         D = {}
 
     parallel = True
@@ -401,27 +451,97 @@ def combined_generator(hist_data, nR, nY, selectYears = [], selectMonths = [], n
         def collect_result(results):
             nonlocal D
             [d, r] = results
-            D[r] = d
+            d.sort_values(by=['Date'], inplace=True)
+            #print(d.head())
+            D[str(r)] = d
         if name == "__main__": #this is a hack
             #https://stackoverflow.com/questions/37737085/is-it-possible-to-use-multiprocessing-in-a-module-with-windows
             #https://stackoverflow.com/a/63632161
             for r in range(0,nR):
                 z = Q_Qg[r]
-                pool.apply_async(KNNdailyGen, args=(r, z, Qtotals, yrRange, monRange, hist_data, totalShiftDays), callback=collect_result)
+                pool.apply_async(KNNdailyGen, args=(r, z, Qtotals, yrRange, monRange, hist_data), callback=collect_result)
     else:
         for r in range(0,nR):
             z = Q_Qg[r]
-            [D[r], _] = KNNdailyGen(r, z, Qtotals, yrRange, monRange, hist_data, totalShiftDays)
+            [d, _] = KNNdailyGen(r, z, Qtotals, yrRange, monRange, hist_data)
+            d.sort_values(by=['Date'], inplace=True)
+            #print(d.head())
+            D[str(r)] = d
             #print(D[r].head()) #.info())
     
     if parallel:
         pool.close()
         pool.join()  # postpones the execution of next line of code until all processes in the queue are done.
-        
-    if shelved:
-        D.close()
-    return D
+        ##please don't close shelf here, data is required to be returned
+        #if shelved:
+            #D.close()
+    return D, shelved
     
 
 
 ##---------------------------------------------------------------------------------
+#lifted functions
+##sourced from https://pyportfolioopt.readthedocs.io/en/latest/_modules/pypfopt/risk_models.html
+##Martin, R. A., (2021). PyPortfolioOpt: portfolio optimization in Python. Journal of Open Source Software, 6(61), 3066, https://doi.org/10.21105/joss.03066
+
+def fix_nonpositive_semidefinite(matrix, fix_method="spectral"):
+    """
+    Check if a covariance matrix is positive semidefinite, and if not, fix it
+    with the chosen method.
+
+    The ``spectral`` method sets negative eigenvalues to zero then rebuilds the matrix,
+    while the ``diag`` method adds a small positive value to the diagonal.
+
+    :param matrix: raw covariance matrix (may not be PSD)
+    :type matrix: pd.DataFrame
+    :param fix_method: {"spectral", "diag"}, defaults to "spectral"
+    :type fix_method: str, optional
+    :raises NotImplementedError: if a method is passed that isn't implemented
+    :return: positive semidefinite covariance matrix
+    :rtype: pd.DataFrame
+    """
+    
+    """
+    #know this already
+    if _is_positive_semidefinite(matrix):
+        return matrix
+
+    warnings.warn(
+        "The covariance matrix is non positive semidefinite. Amending eigenvalues."
+    )
+    """
+
+    # Eigendecomposition
+    q, V = np.linalg.eigh(matrix)
+
+    if fix_method == "spectral":
+        # Remove negative eigenvalues
+        q = np.where(q > 0, q, 0)
+        # Reconstruct matrix
+        fixed_matrix = V @ np.diag(q) @ V.T
+    elif fix_method == "diag":
+        min_eig = np.min(q)
+        fixed_matrix = matrix - 1.1 * min_eig * np.eye(len(matrix))
+    else:
+        raise NotImplementedError("Method {} not implemented".format(fix_method))
+
+    if not _is_positive_semidefinite(fixed_matrix):  # pragma: no cover
+        warnings.warn(
+            "Could not fix matrix. Please try a different risk model.", UserWarning
+        )
+
+    # Rebuild labels if provided
+    if isinstance(matrix, pd.DataFrame):
+        tickers = matrix.index
+        return pd.DataFrame(fixed_matrix, index=tickers, columns=tickers)
+    else:
+        return fixed_matrix
+        
+#adjust matrix to be positive definite
+##https://stackoverflow.com/a/63131309
+def get_near_psd(A):
+    C = (A + A.T)/2
+    eigval, eigvec = np.linalg.eig(C)
+    eigval[eigval < 0] = 0
+
+    return eigvec.dot(np.diag(eigval)).dot(eigvec.T)
