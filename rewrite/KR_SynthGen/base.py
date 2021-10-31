@@ -48,9 +48,10 @@ def convert_data_to_monthly(dailyDf:pd.DataFrame(), debug=False) ->{'station nam
             data = {(key+1):value for key,value in enumerate(redDf.values)}
             #key start at 0, align it to 1 i.e jan
             tempDf = pd.DataFrame(data= data, columns=monthList, index=[thisYear])
+            qMonthly[thisSite] = qMonthly[thisSite].append(tempDf)
             if debug:
                 logging.info('tempDf',tempDf.head())
-            qMonthly[thisSite] = qMonthly[thisSite].append(tempDf)
+            
         if debug:
             logging.info('qMonthly',thisSite,qMonthly[thisSite].head())
     return qMonthly
@@ -138,231 +139,13 @@ def monthly_main( hist_data:pd.DataFrame(), numRealisations:int, numYears:int ) 
     print('done')
     return Qgen #{realisation}{site}{year,month} - years in rows
 
-
-##-------------------------------------------------------------------------------
-##Unverified functions
-def monthly_gen(q_historical:pd.DataFrame(), num_years:int, droughtProbab:float=None, nDroughtYears:int=None)-> {'station name':pd.DataFrame()}:
-    """
-    The method is an implementation of Kirsh(2010) as described in KNN synthetic flow generator
-    A lot of switching on Numpy array to be compliant with matlab formatting, however some are modified for functionality
-    q_historical is monthly
-    """
-    qH_stns = list(q_historical.keys()) #keys are station names
-    #nPoints = len(qH_stns) #no of donor stations
-    nQ_historical = len(q_historical[qH_stns[0]]) #no of years(with months) of data
-    #future - check all dfs are of same size in qhistorical
-
-    num_years = num_years+1
-    # this adjusts for the new corr technique
-
-    if droughtProbab == None and nDroughtYears == None:
-        nQ = nQ_historical
-    else:
-        nDroughtYears = nDroughtYears-1 # (input nDroughtYears=2 to double the frequency, i.e. repmat 1 additional time)
-        nQ = nQ_historical + math.floor(droughtProbab*nQ_historical+1)*nDroughtYears
-
-    Random_Matrix = np.random.randint(nQ, size=(num_years,12))
-    #print(Random_Matrix.shape,'rmsize')
-
-    Qs = {}
-    for k in q_historical.keys():
-        Q_matrix = q_historical[k]
-        if  droughtProbab != None and nDroughtYears != None:
-            tempDf = Q_matrix.copy()
-            tempDf = temp.apply(lambda x: x.sort_values().values)
-            # find lowest droughtProbab# of values for each month for drought scenario
-            appndDf = tempDf.iloc[0:math.ceil(droughtProbab*nQ_historical),:]
-            for i in range(0,nDroughtYears):
-                Q_matrix = pd.concat([Q_matrix,appndDf])
-
-        logQ = Q_matrix.apply(lambda x: np.log(x))
-        #make sure the columns aka months are in sequential order
-        logQ = logQ.reindex(sorted(logQ.columns), axis=1)
-
-        monthly_mean = []
-        monthly_stdev = []
-        Z = []
-        for mon in logQ.columns:
-            m_series = logQ[mon].values
-            m_mean = np.mean(m_series)
-            m_stdev = np.std(m_series)
-            Z.append((m_series - m_mean) / m_stdev) #zscore here and double dim due to logQ[i] series
-            monthly_mean.append(m_mean)
-            monthly_stdev.append(m_stdev)
-        Z = np.array(Z).T #list of lists to array format
-
-        Z_vector = np.ravel(Z) #dont transpose here please
-        #for across year correlation
-        Z_JJ = Z_vector[6:(nQ*12-6)] #:-6 is ideal but drought years are appended, so
-        #july of start year to june of end year
-        Z_shifted = Z_JJ.reshape(-1,12) #no transpose and check the order too
-        #https://bic-berkeley.github.io/psych-214-fall-2016/index_reshape.html
-
-        # The correlation matrices should use the historical Z's
-        # (the "appendedd years" do not preserve correlation)
-        U = chol_corr(Z[:nQ_historical-1,:].T)
-        U_shifted = chol_corr(Z_shifted[:nQ_historical-2,:].T)
-
-        Qs_uncorr = []
-        for i in range(0,12): #python index related
-            #print('z RM',Z.shape,Random_Matrix.shape)
-            #Qs_uncorr.append(Z[i,Random_Matrix[:,i]])#Z shape changed
-            Qs_uncorr.append(Z[Random_Matrix[:,i], i])
-        Qs_uncorr = np.array(Qs_uncorr).T #append works in a different way, so .T
-
-        Qs_uncorr_vector = np.ravel(Qs_uncorr.T)
-        Qs_uncorr_vector_JJ = Qs_uncorr_vector[6:(num_years*12-6)] #index should be correct
-        Qs_uncorr_shifted = Qs_uncorr_vector_JJ.reshape(-1,12) #no transpose here too
-
-        Qs_corr = np.dot(Qs_uncorr,U)
-        Qs_corr_shifted = np.dot(Qs_uncorr_shifted,U_shifted)
-
-        Qs_log = np.empty((len( Qs_corr_shifted ),len( Qs_corr_shifted [0])))
-        #shifted starts from july, so, pick from 6 month offset to get jan
-        Qs_log[:,0:5] = Qs_corr_shifted[:,6:11] #indices adjusted
-        #no need of adjustment here
-        Qs_log[:,6:11] = Qs_corr[1:num_years,6:11]
-
-        Qsk = np.empty((len( Qs_log ),len( Qs_log[0])))
-        for i in range(0,12):
-            Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i])
-        QskDf = pd.DataFrame(Qsk, columns = Q_matrix.columns)
-        Qs[k] = QskDf
-        ##print(QskDf.info())
-
-    return Qs
-
-def KNN_identification( Z:{'station name':pd.DataFrame()}, Qtotals:{'offsets':pd.DataFrame()}, year:int, month:int, K:int=None ):
-    """
-    # [KNN_id, W] = KNN_identification( Z, Qtotals, month, k )
-    #
-    # Identification of K-nearest neighbors of Z in the historical annual data
-    # z and computation of the associated weights W.
-    #
-    # Input:    Z = synthetic datum (scalar)
-    #           Qtotals = total monthly flows at all sites for all historical months
-    #             within +/- 7 days of the month being disaggregated
-    #           month = month being disaggregated
-    #           k = number of nearest neighbors (by default k=n_year^0.5
-    #             according to Lall and Sharma (1996))
-    # Output:   KNN_id = indices of the first K-nearest neighbors of Z in the
-    #             the historical annual data z
-    #           W = nearest neighbors weights, according to Lall and Sharma
-    #             (1996): W(i) = (1/i) / (sum(1/i))
-    #
-    # MatteoG 31/05/2013
-    """
-
-    ##Ntotals is calc in two steps here
-    wShifts = list(Qtotals.keys()) #offsets
-    nSites = list(Qtotals[wShifts[0]].keys()) #stations
-    Ntotals = len(wShifts)*len(Qtotals[wShifts[0]][nSites[0]]) #offsets X years
-    #this is a short circuit and assumes all are same: valid since internally generated
-
-    # Ntotals is the number of historical monthly patterns used for disaggregation.
-    # A pattern is a sequence of ndays of daily flows, where ndays is the
-    # number of days in the month being disaggregated. Patterns are all
-    # historical sequences of length ndays beginning within 7 days before or
-    # after the 1st day of the month being disaggregated.
-
-    # nearest neighbors identification
-    # only look at neighbors from the same month +/- 7 days
-
-    delta = np.zeros((len(wShifts),len(Qtotals[wShifts[0]][nSites[0]]))) #offsets X years
-    for thisOffset in Qtotals.keys(): #shift windows
-        for thisStn in Qtotals[thisOffset].keys(): #stations
-            yrIndex = 0
-            for thisYear in list((Qtotals[thisOffset][thisStn]).index):
-                redDf = Qtotals[thisOffset][thisStn]
-                temp = redDf[redDf.index == thisYear][month].values[0]
-                delta[thisOffset,yrIndex] += math.pow((temp-Z[thisStn][month][year]),2)
-                yrIndex += 1 #array needs index not a year, not an issue with offset as it is 0~15
-
-    Y = pd.Series(np.ravel(np.array(delta)))
-    Y_ord = Y.sort_values()
-    #K defines the subset representing the sample
-    if K is None:
-        K = math.floor(math.sqrt(Ntotals))
-    KNN_id = Y_ord[0:K] #
-    #print(KNN_id)
-
-    # computation of the weights
-    f = np.array(range(1,K+1)) #Watch this, dont adjust index to zero, it will yeild infinity
-    f1 = 1/f
-    #print(f1)
-    W = f1 / sum(f1)
-
-    return KNN_id, W, delta
-
-def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals:{'offsets':pd.DataFrame()}, Qdaily:pd.DataFrame(), offsetDaily:pd.DataFrame(), month:int):
-    """
-    # py = KNN_sampling( KKN_id, indices, Wcum, Qdaily, month )
-    #
-    # Selection of one KNN according to the probability distribution defined by
-    # the weights W.
-    #
-    # Input:    KNN_id = indices of the first K-nearest neighbors
-    #           indices = n x 2 matrix where n is the number of monthly totals
-    #             and the 2 columns store the historical year in which each
-    #             monthly total begins, and the number of shift index
-    #             where 1 is 7 days earlier and 15 is 7 days later
-    #           Wcum = cumulated probability for each nearest neighbor
-    #           Qdaily = historical data
-    #           month = month being disaggregated
-    # Output:   py = selected proportion vector corresponding to the sampled
-    #             shifted historical month
-    #           yearID = randomly selected monthly total (row to select from indices)
-    #
-    # MatteoG 31/05/2013
-    """
-
-    #Randomly select one of the k-NN using the Lall and Sharma density estimator
-    r = np.random.rand(1,1)[0,0]
-    Wcum =  pd.concat([pd.Series([0]), Wcum], ignore_index=True)
-    #print(Wcum)
-
-    KNNs = []
-    for thisWt,nexWt in zip(Wcum[:-1],Wcum[1:]):
-        #print(r,thisWt,nexWt)
-        if (r > thisWt) and (r <= nexWt):
-            #one at a time from octave run
-            KNNs = Wcum[Wcum == thisWt].index[0] ##something is wrong here
-    #print(KNNs)
-    thisKNN_id = (KNN_id.copy()).reset_index(drop=True)
-    yearID = thisKNN_id[KNNs]
-    #print('yid',yearID)
-
-    #extract info from Qtotals
-    wShifts = list(Qtotals.keys()) #offsets
-    nSites = list(Qtotals[wShifts[0]].keys()) #stations
-    yList = Qtotals[wShifts[0]][nSites[0]].index.values
-    #magic to find the year and offset
-    result = np.where(delta == yearID)
-    listOfCoordinates = (list(zip(result[0], result[1])))[0]
-    thisOffset = wShifts[listOfCoordinates[0]] #shift key to access
-    thisYear = yList[listOfCoordinates[1]] #result is 2d tuple now
-    #print(thisOffset,thisYear)
-
-    # concatenate last 7 days of last year before first 7 days of first year
-    # and first 7 days of first year after last 7 days of last year
-    nrows = len(Qdaily)
-    shifted_Qdaily = (offsetDaily.iloc[thisOffset:thisOffset+nrows,:]).copy()
-    #this offset starts with neg patching as index 0, till pos patching (len + 2X patch)
-    shifted_Qdaily.index = Qdaily.index
-    #print(shifted_Qdaily.head())
-    dailyFlows = shifted_Qdaily[(shifted_Qdaily.index.year == thisYear) & (shifted_Qdaily.index.month == month)].copy()
-
-    for thisColumn in dailyFlows.columns:
-        dailyFlows[thisColumn] = dailyFlows[thisColumn]/dailyFlows[thisColumn].sum()
-
-    #print(dailyFlows.head()) #dataframe of daily flow for corresponding year and month for all stations
-    return dailyFlows #df for all stations
-
 def KNNdailyGen(realisation:int, z:{'station':pd.DataFrame()}, Qtotals:{'offsets':pd.DataFrame()}, yrRange:list, monRange:list, hist_data:pd.DataFrame()):
     """
     this function is taken out to utilise the parallel programming functionality of python
     essential it calls the KNN identification and sampling sequentially to produce synthetic daily data.
     """
+    print('R:',realisation)
+    
     d = pd.DataFrame()
     startYear = hist_data.index.year.min()
 
@@ -370,9 +153,9 @@ def KNNdailyGen(realisation:int, z:{'station':pd.DataFrame()}, Qtotals:{'offsets
     wShifts = list(Qtotals.keys()) #offsets
     patchNDays = int((wShifts[-1])/2) #int casted to remove any oddities
     offsetDaily = patchData(hist_data,patchNDays)
-
+    
     for year in yrRange:
-        print('sampling realisation',realisation+1,' for year',year+1, flush = True)
+        #print('sampling realisation',realisation+1,' for year',year+1, flush = True)
         #sys.stdout.flush()
         for month in monRange:
             [KNN_id, W, delta] = KNN_identification(z, Qtotals, year, month)
@@ -390,7 +173,6 @@ def KNNdailyGen(realisation:int, z:{'station':pd.DataFrame()}, Qtotals:{'offsets
             d = pd.concat([d, temp])
     return [d, realisation]
 
-##---------------------------------------------------------------------------------
 def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYears:list = [], selectMonths:list = [], name:'__main__' = None) -> {'realisation':{'station':pd.DataFrame()}} :
     """
     The function packs the code to call multitude of functions in this module that
@@ -497,9 +279,236 @@ def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYea
         pool.close()
         pool.join()  # postpones the execution of next line of code until all processes in the queue are done.
         ##please don't close shelf here, data is required to be returned
-        #if shelved:
-            #D.close()
+
     return D, shelved
+
+##-------------------------------------------------------------------------------
+##Unverified functions
+def monthly_gen(q_historical:pd.DataFrame(), num_years:int, droughtProbab:float=None, nDroughtYears:int=None)-> {'station name':pd.DataFrame()}:
+    """
+    The method is an implementation of Kirsh(2010) as described in KNN synthetic flow generator
+    A lot of switching on Numpy array to be compliant with matlab formatting, however some are modified for functionality
+    q_historical is monthly
+    """
+    qH_stns = list(q_historical.keys()) #keys are station names
+    #nPoints = len(qH_stns) #no of donor stations
+    nQ_historical = len(q_historical[qH_stns[0]]) #no of years(with months) of data
+    #future - check all dfs are of same size in qhistorical
+
+    num_years = num_years+1
+    # this adjusts for the new corr technique
+
+    if droughtProbab == None and nDroughtYears == None:
+        nQ = nQ_historical
+    else:
+        nDroughtYears = nDroughtYears-1 # (input nDroughtYears=2 to double the frequency, i.e. repmat 1 additional time)
+        nQ = nQ_historical + math.floor(droughtProbab*nQ_historical+1)*nDroughtYears
+
+    Random_Matrix = np.random.randint(nQ, size=(num_years,12))
+    #print(Random_Matrix.shape,'rmsize')
+
+    Qs = {}
+    for k in q_historical.keys(): #station
+        Q_matrix = q_historical[k] #dataframe
+        if  droughtProbab != None and nDroughtYears != None:
+            tempDf = Q_matrix.copy()
+            tempDf = temp.apply(lambda x: x.sort_values().values)
+            # find lowest droughtProbab# of values for each month for drought scenario
+            appndDf = tempDf.iloc[0:math.ceil(droughtProbab*nQ_historical),:]
+            for i in range(0,nDroughtYears):
+                Q_matrix = pd.concat([Q_matrix,appndDf])
+
+        logQ = Q_matrix.apply(lambda x: np.log(x))
+        #make sure the columns aka months are in sequential order
+        logQ = logQ.reindex(sorted(logQ.columns), axis=1)
+
+        monthly_mean = []
+        monthly_stdev = []
+        Z = []
+        for mon in logQ.columns:
+            m_series = logQ[mon].values
+            m_mean = np.mean(m_series)
+            m_stdev = np.std(m_series)
+            Z.append((m_series - m_mean)/m_stdev) #zscore here and double dim due to logQ[i] series
+            monthly_mean.append(m_mean)
+            monthly_stdev.append(m_stdev)
+        Z = np.array(Z).T #list of lists to array format
+
+        Z_vector = np.ravel(Z) #dont transpose here please
+        #for across year correlation
+        Z_JJ = Z_vector[6:(nQ*12-6)] #:-6 is ideal but drought years are appended, so
+        #july of start year to june of end year
+        Z_shifted = Z_JJ.reshape(-1,12) #no transpose and check the order too
+        #https://bic-berkeley.github.io/psych-214-fall-2016/index_reshape.html
+
+        # The correlation matrices should use the historical Z's
+        # (the "appendedd years" do not preserve correlation)
+        U = chol_corr(Z[:nQ_historical-1,:].T)
+        U_shifted = chol_corr(Z_shifted[:nQ_historical-2,:].T)
+        
+        Qs_uncorr = []
+        for i in range(0,12): #python index related
+            #print('z RM',Z.shape,Random_Matrix.shape)
+            Qs_uncorr.append(Z[Random_Matrix[:,i], i])
+        Qs_uncorr = np.array(Qs_uncorr).T #append works in a different way, so .T
+
+        Qs_uncorr_vector = np.ravel(Qs_uncorr.T)
+        Qs_uncorr_vector_JJ = Qs_uncorr_vector[6:(num_years*12-6)] #index should be correct
+        Qs_uncorr_shifted = Qs_uncorr_vector_JJ.reshape(-1,12) #no transpose here too
+
+        Qs_corr = np.dot(Qs_uncorr,U)
+        Qs_corr_shifted = np.dot(Qs_uncorr_shifted,U_shifted)
+
+        Qs_log = np.empty((len( Qs_corr_shifted ),len( Qs_corr_shifted [0])))
+        #shifted starts from july, so, pick from 6 month offset to get jan
+        Qs_log[:,0:5] = Qs_corr_shifted[:,6:11] #indices adjusted
+        #no need of adjustment here
+        Qs_log[:,6:11] = Qs_corr[1:num_years,6:11]
+
+        Qsk = np.empty((len( Qs_log ),len( Qs_log[0])))
+        for i in range(0,12):
+            Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i])
+        QskDf = pd.DataFrame(Qsk, columns = Q_matrix.columns)
+        Qs[k] = QskDf
+        ##print(QskDf.info())
+
+    return Qs
+
+
+def KNN_identification( Z:{'station name':pd.DataFrame()}, Qtotals:{'offsets':pd.DataFrame()}, year:int, month:int, K:int=None ):
+    """
+    # [KNN_id, W] = KNN_identification( Z, Qtotals, month, k )
+    #
+    # Identification of K-nearest neighbors of Z in the historical annual data
+    # z and computation of the associated weights W.
+    #
+    # Input:    Z = synthetic datum (scalar)
+    #           Qtotals = total monthly flows at all sites for all historical months
+    #             within +/- 7 days of the month being disaggregated
+    #           month = month being disaggregated
+    #           k = number of nearest neighbors (by default k=n_year^0.5
+    #             according to Lall and Sharma (1996))
+    # Output:   KNN_id = indices of the first K-nearest neighbors of Z in the
+    #             the historical annual data z
+    #           W = nearest neighbors weights, according to Lall and Sharma
+    #             (1996): W(i) = (1/i) / (sum(1/i))
+    #
+    # MatteoG 31/05/2013
+    """
+
+    wShifts = list(Qtotals.keys()) #offsets
+    nSites = list(Qtotals[wShifts[0]].keys()) #stations
+    
+    # Ntotals is the number of historical monthly patterns used for disaggregation.
+    # A pattern is a sequence of ndays of daily flows, where ndays is the
+    # number of days in the month being disaggregated. Patterns are all
+    # historical sequences of length ndays beginning within 7 days before or
+    # after the 1st day of the month being disaggregated.
+
+    # nearest neighbors identification
+    # only look at neighbors from the same month +/- 7 days
+    
+    delta = np.zeros((len(wShifts),len(Qtotals[wShifts[0]][nSites[0]]))) #offsets X years
+    #wondering if this is the most slowest part of the program
+    for thisOffset in Qtotals.keys(): #shift windows
+        for thisStn in Qtotals[thisOffset].keys(): #stations
+            yrIndex = 0
+            myZ = Z[thisStn][month][year]
+            redDf = Qtotals[thisOffset][thisStn][month].copy()
+            """
+            for thisYear in list((Qtotals[thisOffset][thisStn]).index):
+                temp = redDf[redDf.index == thisYear].values[0]
+                #temp = float(redDf[redDf.index == thisYear])
+                delta[thisOffset,yrIndex] += math.pow((temp-myZ),2)
+                yrIndex += 1 #array needs index not a year, not an issue with offset as it is 0~15
+            """
+            delta[thisOffset,:] += redDf.apply(lambda x: math.pow(x-myZ,2))
+
+    Y = pd.Series(np.ravel(np.array(delta)))
+    Y_ord = Y.sort_values()
+    #K defines the subset representing the sample
+    if K is None:
+        Ntotals = len(wShifts)*len(Qtotals[wShifts[0]][nSites[0]]) #offsets X years
+        #this is a short circuit and assumes all are same: valid since internally generated
+        K = math.floor(math.sqrt(Ntotals))
+    
+    KNN_id = Y_ord[0:K] #
+    # computation of the weights
+    f = np.array(range(1,K+1)) #Watch this, dont adjust index to zero, it will yeild infinity
+    f1 = 1/f
+    W = f1 / sum(f1)
+
+    return KNN_id, W, delta
+
+def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals:{'offsets':pd.DataFrame()}, Qdaily:pd.DataFrame(), offsetDaily:pd.DataFrame(), month:int):
+    """
+    # py = KNN_sampling( KKN_id, indices, Wcum, Qdaily, month )
+    #
+    # Selection of one KNN according to the probability distribution defined by
+    # the weights W.
+    #
+    # Input:    KNN_id = indices of the first K-nearest neighbors
+    #           indices = n x 2 matrix where n is the number of monthly totals
+    #             and the 2 columns store the historical year in which each
+    #             monthly total begins, and the number of shift index
+    #             where 1 is 7 days earlier and 15 is 7 days later
+    #           Wcum = cumulated probability for each nearest neighbor
+    #           Qdaily = historical data
+    #           month = month being disaggregated
+    # Output:   py = selected proportion vector corresponding to the sampled
+    #             shifted historical month
+    #           yearID = randomly selected monthly total (row to select from indices)
+    #
+    # MatteoG 31/05/2013
+    """
+    #Randomly select one of the k-NN using the Lall and Sharma density estimator
+    #r = np.random.rand(1,1)[0,0]
+    r = np.random.rand()
+    
+    KNNs = []
+    """
+    Wcum =  pd.concat([pd.Series([0]), Wcum], ignore_index=True)
+    #print(Wcum)
+    for thisWt,nexWt in zip(Wcum[:-1],Wcum[1:]):
+        #print(r,thisWt,nexWt)
+        if (r > thisWt) and (r <= nexWt):
+            #one at a time from octave run
+            KNNs = Wcum[Wcum == thisWt].index[0] ##something is wrong here
+    """
+    KNNs = np.argmin(np.abs(np.array(Wcum)-r)) #abs to avoid picking negative diff as min
+    thisKNN_id = (KNN_id.copy()).reset_index(drop=True)
+    yearID = thisKNN_id[KNNs]
+    #print('yid',yearID)
+
+    #extract info from Qtotals
+    wShifts = list(Qtotals.keys()) #offsets
+    nSites = list(Qtotals[wShifts[0]].keys()) #stations
+    yList = Qtotals[wShifts[0]][nSites[0]].index.values
+    #magic to find the year and offset
+    result = np.where(delta == yearID)
+    listOfCoordinates = (list(zip(result[0], result[1])))[0]
+    thisOffset = wShifts[listOfCoordinates[0]] #shift key to access
+    thisYear = yList[listOfCoordinates[1]] #result is 2d tuple now
+    #print(thisOffset,thisYear)
+
+    # concatenate last 7 days of last year before first 7 days of first year
+    # and first 7 days of first year after last 7 days of last year
+    nrows = len(Qdaily)
+    shifted_Qdaily = (offsetDaily.iloc[thisOffset:thisOffset+nrows,:]).copy()
+    #this offset starts with neg patching as index 0, till pos patching (len + 2X patch)
+    shifted_Qdaily.index = Qdaily.index
+    #print(shifted_Qdaily.head())
+    dailyFlows = shifted_Qdaily[(shifted_Qdaily.index.year == thisYear) & (shifted_Qdaily.index.month == month)].copy()
+
+    for thisColumn in dailyFlows.columns:
+        dailyFlows[thisColumn] = dailyFlows[thisColumn]/dailyFlows[thisColumn].sum()
+
+    #print(dailyFlows.head()) #dataframe of daily flow for corresponding year and month for all stations
+    return dailyFlows #df for all stations
+
+
+##---------------------------------------------------------------------------------
+
 
 
 
