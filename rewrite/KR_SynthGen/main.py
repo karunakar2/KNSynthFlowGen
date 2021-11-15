@@ -34,12 +34,12 @@ def main():
     ##num_years = [nYears, 1]
     
     #matlab specs
-    ###num_realizations = [100, 1000]
-    ###num_years = [100, 1]
+    num_realizations = [100, 1000]
+    num_years = [100, 1]
     
     #test set
-    num_realizations = [3]
-    num_years = [2]
+    #num_realizations = [3]
+    #num_years = [2]
     
     #set folders
     try:

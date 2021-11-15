@@ -9,18 +9,21 @@ switching between numpy and pandas to comply with matlab formatting and for the 
 """
 
 
-#import sys
-#import warnings
+import sys
+import warnings
 import math
 import shelve
 #from datetime import date
-import logging
 
 import numpy as np
 import pandas as pd
 
-logging.basicConfig(filename='./test.log', level=logging.DEBUG, format='%(asctime)s | %(levelname)s | %(funcName)s |%(message)s')
+from tqdm import tqdm
 
+import logging
+logging.basicConfig(filename='./kkGapFilling.log', level=logging.DEBUG, filemode='w',
+        format='%(asctime)s | %(levelname)s | %(funcName)s |%(message)s')
+        
 #Validated functions
 #Sum aggregates the daily data to monthly values
 def convert_data_to_monthly(dailyDf:pd.DataFrame(), debug=False) ->{'station name':pd.DataFrame()}:
@@ -45,8 +48,8 @@ def convert_data_to_monthly(dailyDf:pd.DataFrame(), debug=False) ->{'station nam
         #populate the dataframes
         for thisYear in yearList: #range(min(yearList), max(yearList)+1):
             redDf = mDf.loc[thisYear,thisSite]
-            data = {(key+1):value for key,value in enumerate(redDf.values)}
-            #key start at 0, align it to 1 i.e jan
+            #data = {(key+1):value for key,value in enumerate(redDf.values)}
+            data = {(key):value for key,value in zip(redDf.index, redDf.values)}
             tempDf = pd.DataFrame(data= data, columns=monthList, index=[thisYear])
             qMonthly[thisSite] = qMonthly[thisSite].append(tempDf)
             if debug:
@@ -74,8 +77,8 @@ def patchData(hist_data:pd.DataFrame(), period:int, debug:bool=0) -> pd.DataFram
     extra_hist_data = pd.concat([preDf,hist_data,posDf])
     if debug != 0:
         print(extra_hist_data.head())
-        print(extra_hist_data.tail())
-        print(len(hist_data),len(extra_hist_data))
+        logging.info(extra_hist_data.tail())
+        logging.info(len(hist_data),len(extra_hist_data))
 
     return extra_hist_data
 
@@ -117,10 +120,10 @@ def chol_corr(Z: np.ndarray) -> np.ndarray:
             #R = get_near_psd(R)
             #R = fix_nonpositive_semidefinite(R)
             #if R.all() == old.all():
-            #    print('same')
+            #    logging.info('same')
             posDef = True
         except Exception as err:
-            print(err)
+            logging.info(err)
             raise Exception('Unable to handle this error')
     return U
 
@@ -144,7 +147,7 @@ def KNNdailyGen(realisation:int, z:{'station':pd.DataFrame()}, Qtotals:{'offsets
     this function is taken out to utilise the parallel programming functionality of python
     essential it calls the KNN identification and sampling sequentially to produce synthetic daily data.
     """
-    print('R:',realisation)
+    #print('R:',realisation) #handled with tqdm
     
     d = pd.DataFrame()
     startYear = hist_data.index.year.min()
@@ -155,7 +158,7 @@ def KNNdailyGen(realisation:int, z:{'station':pd.DataFrame()}, Qtotals:{'offsets
     offsetDaily = patchData(hist_data,patchNDays)
     
     for year in yrRange:
-        #print('sampling realisation',realisation+1,' for year',year+1, flush = True)
+        #logging.info('sampling realisation',realisation+1,' for year',year+1, flush = True)
         #sys.stdout.flush()
         for month in monRange:
             [KNN_id, W, delta] = KNN_identification(z, Qtotals, year, month)
@@ -163,17 +166,26 @@ def KNNdailyGen(realisation:int, z:{'station':pd.DataFrame()}, Qtotals:{'offsets
             py = KNN_sampling(KNN_id, Wcum, delta, Qtotals, hist_data, offsetDaily, month)
             #replace the original years in index with predicted year
             py.reset_index(inplace=True)
-            #print(py.head())
+            #logging.info(py.head())
             py['Date'] = py['Date'].apply(lambda x: x.replace(year = startYear+year))
             py.set_index('Date', inplace=True)
             #temp = py.apply(lambda x: x*(z[x.name].iloc[year,month-1])/(3600*24))
             temp = py.apply(lambda x: x*(z[x.name][month][year])/(3600*24))
             #aka 86400 s/day
-            #print('temp',temp.head())
+            #logging.info('temp',temp.head())
             d = pd.concat([d, temp])
     return [d, realisation]
 
-def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYears:list = [], selectMonths:list = [], name:'__main__' = None) -> {'realisation':{'station':pd.DataFrame()}} :
+def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYears:list = [], selectMonths:list = [], name:'__main__' = None, checkGaps=False) -> {'realisation':{'station':pd.DataFrame()}} :
+    parallel = True
+    if name is None:
+        parallel = False
+        logging.info('serial simulation')
+    else:
+        from multiprocessing_logging import install_mp_handler
+        install_mp_handler()
+        logging.info('parallel simulation')
+    
     """
     The function packs the code to call multitude of functions in this module that
     cater to production of monthly estimates and daily stream data fitting.
@@ -192,14 +204,63 @@ def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYea
             monRange = selectMonths
         else: #for the sake of reader
             raise Exception('Month list should not have values between 0,12')
-
+    
+    if ('Date' not in hist_data.columns) and ('Date' != hist_data.index.name):
+        if 'timestamp' == hist_data.index.name:
+            hist_data.index.name = 'Date'
+            #logging.info(hist_data.index.name, 'changed')
+        elif 'timestamp' in hist_data.columns:
+            hist_data.rename(columns={'timestamp':'Date'},inplace=True)
+            hist_data.set_index('Date', inplace=True)
+        else:
+            print(hist_data.head())
+            print(hist_data.index.name)
+            logging.info("'Date' or 'timestamp' column is expected")           
+            raise Exception ("'Date' or 'timestamp' column is expected")           
+    
+    #remove any negative values and transform as required to avoid log issues later
+    preprocDrift = {}
+    preprocDrift['note'] = 'add these values to final values to reset to original values'
+    #handle any negative values
+    for thisColumn in hist_data:
+        if hist_data[thisColumn].min() <=0:
+            temp = hist_data[thisColumn].min()*1.01 #to avoid zeros 
+            preprocDrift[thisColumn] = temp #for post processing
+            hist_data[thisColumn] -= temp
+    #print(hist_data.describe())#info())
+    
     hist_data.sort_values(by='Date', inplace=True)
-
+    filterStart = None
+    filterEnd = None
+    #the data has to start from 1jan and end by 31dec
+    if hist_data.index.min().month != 1:
+        logging.info('data at start trimmed upto next jan')
+        print('data at start trimmed upto next jan')
+        hist_data = hist_data[hist_data.index >= (str(hist_data.index.min().year+1)+'-01-01')]
+        print(hist_data.head())
+    if hist_data.index.max().month != 12:
+        logging.info('data at end trimmed upto previous dec')
+        print('data at end trimmed upto previous dec')
+        hist_data = hist_data[hist_data.index <= (str(hist_data.index.max().year-1)+'-12-31')]
+        print(hist_data.tail())
+    
+    #check for data gaps
+    if checkGaps:
+        #expectedLength = (hist_data.index.max().year - hist_data.index.min().year +1)*365
+        expectedLength = (hist_data.index.max() - hist_data.index.min()).days + 1
+        if len(hist_data) < expectedLength:
+            raise Exception ("Data gaps are not allowed, please fill in to requirement")
+        else:
+            hist_data = hist_data[~hist_data.index.duplicated(keep='first')]
+        #remove feb 29ths as per original description
+    
     # generation of monthly data via Kirsch et al. (2013):
     # Kirsch, B. R., G. W. Characklis, and H. B. Zeff (2013),
     # Evaluating the impact of alternative hydro-climate scenarios on transfer
     # agreements: Practical improvement for generating synthetic streamflows,
     # Journal of Water Resources Planning and Management, 139(4), 396–406.
+    
+    #this can be parallelised
     Q_Qg = monthly_main(hist_data, nR, nY ) #dict(realisation) of dicts(sites) of year-mon matrices
     
     #Qh_mon = convert_data_to_monthly(hist_data)
@@ -238,42 +299,49 @@ def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYea
         D = shelve.open('predCache', flag='n') #,'c' #alt flag
         shelved = True
     except Exception as er:
-        print(er)
-        print('using RAM to store data')
+        logging.info(er)
+        logging.info('using RAM to store data')
         D = {}
-
-    parallel = True
-    if name is None:
-        parallel = False
-        print('serial simulation')
 
     #parallel option
     if parallel:
         import multiprocessing as mp
         pool = mp.Pool(mp.cpu_count()-1)
         #leave 1 core for the computer to respond
-
+        
+        #https://stackoverflow.com/a/67115380
+        pbar = tqdm(total=nR)
         #helper function to put result in correct place for parallel
         def collect_result(results):
             nonlocal D
             [d, r] = results
             d.sort_values(by=['Date'], inplace=True)
-            #print(d.head())
+            #logging.info(d.head())
+            for thisCol in d.columns:
+                if thisCol in preprocDrift.keys():
+                    d[thisCol] += preprocDrift[thisCol]
             D[str(r)] = d
+            pbar.update()
+            
         if name == "__main__": #this is a hack
             #https://stackoverflow.com/questions/37737085/is-it-possible-to-use-multiprocessing-in-a-module-with-windows
             #https://stackoverflow.com/a/63632161
-            for r in range(0,nR):
+            for r in range(pbar.total):
+            #for r in range(0,nR): #alt with tqdm
                 z = Q_Qg[r]
                 pool.apply_async(KNNdailyGen, args=(r, z, Qtotals, yrRange, monRange, hist_data), callback=collect_result)
     else:
-        for r in range(0,nR):
+        #for r in range(0,nR):
+        for r in tqdm(range(nR)):
             z = Q_Qg[r]
             [d, _] = KNNdailyGen(r, z, Qtotals, yrRange, monRange, hist_data)
             d.sort_values(by=['Date'], inplace=True)
-            #print(d.head())
+            #logging.info(d.head())
+            for thisCol in d.columns:
+                if thisCol in preprocDrift.keys():
+                    d[thisCol] += preprocDrift[thisCol]
             D[str(r)] = d
-            #print(D[r].head()) #.info())
+            #logging.info(D[r].head()) #.info())
 
     if parallel:
         pool.close()
@@ -293,6 +361,8 @@ def monthly_gen(q_historical:pd.DataFrame(), num_years:int, droughtProbab:float=
     qH_stns = list(q_historical.keys()) #keys are station names
     #nPoints = len(qH_stns) #no of donor stations
     nQ_historical = len(q_historical[qH_stns[0]]) #no of years(with months) of data
+    if nQ_historical < 3:
+        raise Exception('More than 3 years data is required')
     #future - check all dfs are of same size in qhistorical
 
     num_years = num_years+1
@@ -305,7 +375,7 @@ def monthly_gen(q_historical:pd.DataFrame(), num_years:int, droughtProbab:float=
         nQ = nQ_historical + math.floor(droughtProbab*nQ_historical+1)*nDroughtYears
 
     Random_Matrix = np.random.randint(nQ, size=(num_years,12))
-    #print(Random_Matrix.shape,'rmsize')
+    #logging.info(Random_Matrix.shape,'rmsize')
 
     Qs = {}
     for k in q_historical.keys(): #station
@@ -333,22 +403,28 @@ def monthly_gen(q_historical:pd.DataFrame(), num_years:int, droughtProbab:float=
             monthly_mean.append(m_mean)
             monthly_stdev.append(m_stdev)
         Z = np.array(Z).T #list of lists to array format
+        if np.isnan(np.sum(Z)):
+            raise Exception ('Z scores has Nan')
 
         Z_vector = np.ravel(Z) #dont transpose here please
         #for across year correlation
         Z_JJ = Z_vector[6:(nQ*12-6)] #:-6 is ideal but drought years are appended, so
         #july of start year to june of end year
-        Z_shifted = Z_JJ.reshape(-1,12) #no transpose and check the order too
+        Z_shifted = Z_JJ.reshape(-1,12) #no transpose here and check the order too
         #https://bic-berkeley.github.io/psych-214-fall-2016/index_reshape.html
-
+        
         # The correlation matrices should use the historical Z's
         # (the "appendedd years" do not preserve correlation)
-        U = chol_corr(Z[:nQ_historical-1,:].T)
-        U_shifted = chol_corr(Z_shifted[:nQ_historical-2,:].T)
+        #U = chol_corr(Z[:nQ_historical-1,:].T)
+        U = chol_corr(Z[:nQ_historical,:].T)
+        #U_shifted = chol_corr(Z_shifted[:nQ_historical-2,:].T)
+        U_shifted = chol_corr(Z_shifted[:nQ_historical-1,:].T)
+        if np.isnan(np.sum(U)) or np.isnan(np.sum(U_shifted)):
+            raise Exception ('U has Nan')
         
         Qs_uncorr = []
         for i in range(0,12): #python index related
-            #print('z RM',Z.shape,Random_Matrix.shape)
+            #logging.info('z RM',Z.shape,Random_Matrix.shape)
             Qs_uncorr.append(Z[Random_Matrix[:,i], i])
         Qs_uncorr = np.array(Qs_uncorr).T #append works in a different way, so .T
 
@@ -364,13 +440,15 @@ def monthly_gen(q_historical:pd.DataFrame(), num_years:int, droughtProbab:float=
         Qs_log[:,0:5] = Qs_corr_shifted[:,6:11] #indices adjusted
         #no need of adjustment here
         Qs_log[:,6:11] = Qs_corr[1:num_years,6:11]
-
+        if np.isnan(np.sum(Qs_log)):
+            raise Exception ('Qs has Nan')
+        
         Qsk = np.empty((len( Qs_log ),len( Qs_log[0])))
         for i in range(0,12):
             Qsk[:,i] = np.exp(Qs_log[:,i]*monthly_stdev[i] + monthly_mean[i])
         QskDf = pd.DataFrame(Qsk, columns = Q_matrix.columns)
         Qs[k] = QskDf
-        ##print(QskDf.info())
+        ##logging.info(QskDf.info())
 
     return Qs
 
@@ -468,9 +546,9 @@ def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals
     KNNs = []
     """
     Wcum =  pd.concat([pd.Series([0]), Wcum], ignore_index=True)
-    #print(Wcum)
+    #logging.info(Wcum)
     for thisWt,nexWt in zip(Wcum[:-1],Wcum[1:]):
-        #print(r,thisWt,nexWt)
+        #logging.info(r,thisWt,nexWt)
         if (r > thisWt) and (r <= nexWt):
             #one at a time from octave run
             KNNs = Wcum[Wcum == thisWt].index[0] ##something is wrong here
@@ -478,7 +556,7 @@ def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals
     KNNs = np.argmin(np.abs(np.array(Wcum)-r)) #abs to avoid picking negative diff as min
     thisKNN_id = (KNN_id.copy()).reset_index(drop=True)
     yearID = thisKNN_id[KNNs]
-    #print('yid',yearID)
+    #logging.info('yid',yearID)
 
     #extract info from Qtotals
     wShifts = list(Qtotals.keys()) #offsets
@@ -486,24 +564,35 @@ def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals
     yList = Qtotals[wShifts[0]][nSites[0]].index.values
     #magic to find the year and offset
     result = np.where(delta == yearID)
-    listOfCoordinates = (list(zip(result[0], result[1])))[0]
+    try:
+        #listOfCoordinates = (list(zip(result[0], result[1])))[0]
+        temp = list(zip(result[0], result[1]))
+        selection = np.random.choice(range(len(temp)))
+        listOfCoordinates = temp[selection]
+    except Exception as er:
+        logging.info('delta \n',delta)
+        logging.info('yearID',yearID)
+        logging.info('r',r)
+        logging.info('Wt',Wcum)
+        raise Exception(er)
+        
     thisOffset = wShifts[listOfCoordinates[0]] #shift key to access
     thisYear = yList[listOfCoordinates[1]] #result is 2d tuple now
-    #print(thisOffset,thisYear)
-
+    #logging.info(thisOffset,thisYear,month)
+    
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
     nrows = len(Qdaily)
     shifted_Qdaily = (offsetDaily.iloc[thisOffset:thisOffset+nrows,:]).copy()
     #this offset starts with neg patching as index 0, till pos patching (len + 2X patch)
     shifted_Qdaily.index = Qdaily.index
-    #print(shifted_Qdaily.head())
+    #logging.info(shifted_Qdaily.head())
     dailyFlows = shifted_Qdaily[(shifted_Qdaily.index.year == thisYear) & (shifted_Qdaily.index.month == month)].copy()
 
     for thisColumn in dailyFlows.columns:
         dailyFlows[thisColumn] = dailyFlows[thisColumn]/dailyFlows[thisColumn].sum()
 
-    #print(dailyFlows.head()) #dataframe of daily flow for corresponding year and month for all stations
+    #logging.info(dailyFlows.head()) #dataframe of daily flow for corresponding year and month for all stations
     return dailyFlows #df for all stations
 
 
@@ -514,6 +603,7 @@ def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals
 
 ##---------------------------------------------------------------------------------
 #lifted functions
+
 ##sourced from https://pyportfolioopt.readthedocs.io/en/latest/_modules/pypfopt/risk_models.html
 ##Martin, R. A., (2021). PyPortfolioOpt: portfolio optimization in Python. Journal of Open Source Software, 6(61), 3066, https://doi.org/10.21105/joss.03066
 
