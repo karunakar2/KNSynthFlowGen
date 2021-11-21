@@ -8,22 +8,22 @@ available from pandas. While some code is folded, some lines have to be expanded
 switching between numpy and pandas to comply with matlab formatting and for the sake of user readability
 """
 
+from pathlib import Path
 
-import sys
-import warnings
+#import sys
+#import warnings
 import math
 import shelve
 #from datetime import date
+import logging
 
 import numpy as np
 import pandas as pd
 
 from tqdm import tqdm
 
-import logging
-logging.basicConfig(filename='./kkGapFilling.log', level=logging.DEBUG, filemode='w',
-        format='%(asctime)s | %(levelname)s | %(funcName)s |%(message)s')
-        
+logging.basicConfig(filename='./kSynthGen.log', level=logging.DEBUG, format='%(asctime)s | %(levelname)s | %(funcName)s |%(message)s')
+
 #Validated functions
 #Sum aggregates the daily data to monthly values
 def convert_data_to_monthly(dailyDf:pd.DataFrame(), debug=False) ->{'station name':pd.DataFrame()}:
@@ -176,15 +176,17 @@ def KNNdailyGen(realisation:int, z:{'station':pd.DataFrame()}, Qtotals:{'offsets
             d = pd.concat([d, temp])
     return [d, realisation]
 
-def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYears:list = [], selectMonths:list = [], name:'__main__' = None, checkGaps=False) -> {'realisation':{'station':pd.DataFrame()}} :
-    parallel = True
-    if name is None:
-        parallel = False
-        logging.info('serial simulation')
-    else:
-        from multiprocessing_logging import install_mp_handler
-        install_mp_handler()
-        logging.info('parallel simulation')
+def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYears:list = [], selectMonths:list = [], name:'__main__' = None) -> {'realisation':{'station':pd.DataFrame()}} :
+    """
+    #set the log files
+    logSet = False
+    while not logSet:
+        thisNo = str(np.random.randint(nR))
+        my_file = Path('./kSynthGen'+thisNo+'.log')
+        if not my_file.is_file(): #file doesn't exist
+            logging.basicConfig(filename='./kSynthGen'+thisNo+'.log', level=logging.DEBUG, format='%(asctime)s | %(levelname)s | %(funcName)s |%(message)s')
+            logSet = True
+    """
     
     """
     The function packs the code to call multitude of functions in this module that
@@ -218,7 +220,6 @@ def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYea
             logging.info("'Date' or 'timestamp' column is expected")           
             raise Exception ("'Date' or 'timestamp' column is expected")           
     
-    #remove any negative values and transform as required to avoid log issues later
     preprocDrift = {}
     preprocDrift['note'] = 'add these values to final values to reset to original values'
     #handle any negative values
@@ -245,7 +246,7 @@ def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYea
         print(hist_data.tail())
     
     #check for data gaps
-    if checkGaps:
+    if False:
         #expectedLength = (hist_data.index.max().year - hist_data.index.min().year +1)*365
         expectedLength = (hist_data.index.max() - hist_data.index.min()).days + 1
         if len(hist_data) < expectedLength:
@@ -302,6 +303,11 @@ def combined_generator(hist_data:pd.DataFrame(), nR:int, nY:int, selectOffsetYea
         logging.info(er)
         logging.info('using RAM to store data')
         D = {}
+
+    parallel = True
+    if name is None:
+        parallel = False
+        logging.info('serial simulation')
 
     #parallel option
     if parallel:
@@ -567,8 +573,7 @@ def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals
     try:
         #listOfCoordinates = (list(zip(result[0], result[1])))[0]
         temp = list(zip(result[0], result[1]))
-        selection = np.random.choice(range(len(temp)))
-        listOfCoordinates = temp[selection]
+        listOfCoordinates = temp[np.random.choice(len(temp))]
     except Exception as er:
         logging.info('delta \n',delta)
         logging.info('yearID',yearID)
@@ -578,8 +583,8 @@ def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals
         
     thisOffset = wShifts[listOfCoordinates[0]] #shift key to access
     thisYear = yList[listOfCoordinates[1]] #result is 2d tuple now
-    #logging.info(thisOffset,thisYear,month)
-    
+    #logging.info(thisOffset,thisYear)
+
     # concatenate last 7 days of last year before first 7 days of first year
     # and first 7 days of first year after last 7 days of last year
     nrows = len(Qdaily)
@@ -603,7 +608,6 @@ def KNN_sampling( KNN_id:pd.Series(), Wcum:np.ndarray, delta:np.ndarray, Qtotals
 
 ##---------------------------------------------------------------------------------
 #lifted functions
-
 ##sourced from https://pyportfolioopt.readthedocs.io/en/latest/_modules/pypfopt/risk_models.html
 ##Martin, R. A., (2021). PyPortfolioOpt: portfolio optimization in Python. Journal of Open Source Software, 6(61), 3066, https://doi.org/10.21105/joss.03066
 
