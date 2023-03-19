@@ -482,7 +482,7 @@ def KNN_identification( Z:{'station name':pd.DataFrame()}, Qtotals:{'offsets':pd
 
     wShifts = list(Qtotals.keys()) #offsets
     nSites = list(Qtotals[wShifts[0]].keys()) #stations
-    
+
     # Ntotals is the number of historical monthly patterns used for disaggregation.
     # A pattern is a sequence of ndays of daily flows, where ndays is the
     # number of days in the month being disaggregated. Patterns are all
@@ -491,12 +491,12 @@ def KNN_identification( Z:{'station name':pd.DataFrame()}, Qtotals:{'offsets':pd
 
     # nearest neighbors identification
     # only look at neighbors from the same month +/- 7 days
-    
+
     delta = np.zeros((len(wShifts),len(Qtotals[wShifts[0]][nSites[0]]))) #offsets X years
+    yrIndex = 0
     #wondering if this is the most slowest part of the program
     for thisOffset in Qtotals.keys(): #shift windows
         for thisStn in Qtotals[thisOffset].keys(): #stations
-            yrIndex = 0
             myZ = Z[thisStn][month][year]
             redDf = Qtotals[thisOffset][thisStn][month].copy()
             """
@@ -515,8 +515,8 @@ def KNN_identification( Z:{'station name':pd.DataFrame()}, Qtotals:{'offsets':pd
         Ntotals = len(wShifts)*len(Qtotals[wShifts[0]][nSites[0]]) #offsets X years
         #this is a short circuit and assumes all are same: valid since internally generated
         K = math.floor(math.sqrt(Ntotals))
-    
-    KNN_id = Y_ord[0:K] #
+
+    KNN_id = Y_ord[:K]
     # computation of the weights
     f = np.array(range(1,K+1)) #Watch this, dont adjust index to zero, it will yeild infinity
     f1 = 1/f
@@ -650,7 +650,7 @@ def fix_nonpositive_semidefinite(matrix, fix_method="spectral"):
         min_eig = np.min(q)
         fixed_matrix = matrix - 1.1 * min_eig * np.eye(len(matrix))
     else:
-        raise NotImplementedError("Method {} not implemented".format(fix_method))
+        raise NotImplementedError(f"Method {fix_method} not implemented")
 
     # Rebuild labels if provided
     if isinstance(matrix, pd.DataFrame):
