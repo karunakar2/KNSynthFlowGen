@@ -22,10 +22,7 @@ df = pd.DataFrame()
 for fName in fileList:
     thisDf = pd.read_csv(fName, parse_dates=["Date"])
     thisDf.set_index('Date',inplace=True)
-    if len(df) < 1:
-        df = thisDf.copy()
-    else:
-        df = df.merge(thisDf, on='Date')
+    df = thisDf.copy() if len(df) < 1 else df.merge(thisDf, on='Date')
     #print(thisDf.head())
 
 #the leap year extra day is not favourable and hence removed
